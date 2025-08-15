@@ -56,8 +56,8 @@ export default function Login() {
                     />
                 </Pressable>
             </View>
-            <TouchableOpacity className="w-full h-12 bg-blue-600 rounded-lg justify-center items-center mb-4 shadow">
-                <Text className="text-white text-lg font-bold" onPress={handleLogin}>Login</Text>
+            <TouchableOpacity className="w-full h-12 bg-blue-600 rounded-lg justify-center items-center mb-4 shadow" onPress={handleLogin}>
+                <Text className="text-white text-lg font-bold">Login</Text>
             </TouchableOpacity>
             <Text className="text-sm text-slate-500">
                 Don't have an account? <Text className="text-blue-600 font-bold">Sign Up</Text>
