@@ -1,91 +1,73 @@
-import { Ionicons } from "@expo/vector-icons";
+// app/pin-verify.tsx
+import { isPinEnabled, verifyPin } from "@/src/services/pin";
 import { useRouter } from "expo-router";
-import { useState } from "react";
-import {
-  Image,
-  Pressable,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import React, { useEffect, useState } from "react";
+import { Alert, Button, Text, TextInput, View } from "react-native";
+// optional biometrics
+// import * as LocalAuthentication from 'expo-local-authentication';
 
-export default function Login() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
+const MAX_ATTEMPTS = 5;
+
+export default function PinVerify() {
   const router = useRouter();
+  const [pin, setPin] = useState("");
+  const [tries, setTries] = useState(0);
 
-  const handleLogin = () => {
-    if (!email || !password) {
-      alert("Please enter both email and password");
-      return;
-    }
-    if (email === "123" && password === "123") {
-      router.replace("/dashboard");
-    }
-  };
+  // If user disabled PIN while this screen is open, skip back to home
+  useEffect(() => {
+    (async () => {
+      if (!(await isPinEnabled())) router.replace("/dashboard");
+    })();
+  }, []);
 
-  const googleLogin = () => {};
+  async function onUnlock() {
+    const ok = await verifyPin(pin);
+    console.log(`This is Okay Variable: ${ok}`);
+    if (ok) {
+      router.replace("/dashboard"); // go to dashboard
+    } else {
+      const next = tries + 1;
+      setTries(next);
+      setPin("");
+      if (next >= MAX_ATTEMPTS) {
+        Alert.alert("Too many attempts", "Please wait and try again.");
+      } else {
+        Alert.alert("Incorrect PIN", `Attempts left: ${MAX_ATTEMPTS - next}`);
+      }
+    }
+  }
+
+  // Optional biometrics:
+  // async function tryBiometric() {
+  //   const avail = await LocalAuthentication.hasHardwareAsync();
+  //   const enrolled = await LocalAuthentication.isEnrolledAsync();
+  //   if (!avail || !enrolled) return;
+  //   const res = await LocalAuthentication.authenticateAsync({ promptMessage: 'Unlock' });
+  //   if (res.success) router.replace('/');
+  // }
+
   return (
-    <View className="w-full flex-1 justify-center items-center px-6 bg-gradient-to-br from-red-100 via-blue-100 to-gray-200">
-      <Image
-        source={require("../assets/images/icon.png")}
-        style={{ width: 120, height: 120 }}
-        className="mb-4"
-      />
-      <Text className="text-xl font-semibold text-slate-700 mb-6">
-        Sign in to your account
+    <View style={{ flex: 1, justifyContent: "center", padding: 20, gap: 12 }}>
+      <Text style={{ fontSize: 20, fontWeight: "700", textAlign: "center" }}>
+        Enter PIN
       </Text>
       <TextInput
-        className="w-full h-12 bg-white rounded-lg px-4 mb-4 text-base border border-gray-200 shadow"
-        placeholder="Email"
-        placeholderTextColor="#888"
-        value={email}
-        onChangeText={setEmail}
-        keyboardType="email-address"
-        autoCapitalize="none"
+        placeholder="••••"
+        secureTextEntry
+        keyboardType="number-pad"
+        value={pin}
+        onChangeText={setPin}
+        style={{
+          borderWidth: 1,
+          padding: 14,
+          borderRadius: 12,
+          textAlign: "center",
+          fontSize: 24,
+          letterSpacing: 4,
+        }}
       />
-      <View className="w-full mb-4 relative">
-        <TextInput
-          className="h-12 bg-white rounded-lg px-4 text-base border border-gray-200 pr-10 shadow"
-          placeholder="Password"
-          placeholderTextColor="#888"
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry={!showPassword}
-        />
-        <Pressable
-          style={{
-            position: "absolute",
-            right: 16,
-            top: 12,
-          }}
-          onPress={() => setShowPassword((prev) => !prev)}
-        >
-          <Ionicons
-            name={showPassword ? "eye-off" : "eye"}
-            size={24}
-            color="#888"
-          />
-        </Pressable>
-      </View>
-      <TouchableOpacity
-        className="w-full h-12 bg-green-600 rounded-lg justify-center items-center mb-4 shadow-lg"
-        onPress={handleLogin}
-      >
-        <Text className="text-white text-lg font-bold">Login</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        className="w-full h-12 bg-blue-600 rounded-lg justify-center items-center mb-4 shadow-lg"
-        onPress={googleLogin}
-      >
-        <Text className="text-white text-lg font-bold">Login via Google</Text>
-      </TouchableOpacity>
-      <Text className="text-sm text-slate-500 mt-2">
-        Don't have an account?{" "}
-        <Text className="text-blue-600 font-bold">Sign Up</Text>
-      </Text>
+      <Button title="Unlock" onPress={onUnlock} />
+      {/* <Button title="Use biometrics" onPress={tryBiometric} /> */}
     </View>
   );
 }

@@ -1,10 +1,12 @@
 import Navbar from "@/src/components/navbar";
 import { Ionicons } from "@expo/vector-icons";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+
 import * as React from "react";
 import CameraPage from "./camera";
 import HomePage from "./home";
 import ProfilePage from "./profile";
+
 // Home Screen
 function HomeScreen() {
   return <HomePage />;
