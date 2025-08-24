@@ -3,7 +3,7 @@ import { isPinEnabled, verifyPin } from "@/src/services/pin";
 import { usePinGate } from "@/src/state/pinGate";
 import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
-import { Alert, Button, Text, TextInput, View } from "react-native";
+import { Alert, Button, Image, Text, TextInput, View } from "react-native";
 // optional biometrics
 // import * as LocalAuthentication from 'expo-local-authentication';
 
@@ -49,27 +49,43 @@ export default function PinVerify() {
   // }
 
   return (
-    <View style={{ flex: 1, justifyContent: "center", padding: 20, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "700", textAlign: "center" }}>
-        Enter PIN
-      </Text>
-      <TextInput
-        placeholder="••••"
-        secureTextEntry
-        keyboardType="number-pad"
-        value={pin}
-        onChangeText={setPin}
+    <>
+      <View
         style={{
-          borderWidth: 1,
-          padding: 14,
-          borderRadius: 12,
-          textAlign: "center",
-          fontSize: 24,
-          letterSpacing: 4,
+          width: "100%",
+          flex: 1,
+          justifyContent: "center",
+          padding: 20,
+          gap: 12,
         }}
-      />
-      <Button title="Unlock" onPress={onUnlock} />
-      {/* <Button title="Use biometrics" onPress={tryBiometric} /> */}
-    </View>
+      >
+        <View className="w-full items-center">
+          <Image
+            source={require("../assets/images/icon.png")}
+            style={{ width: 200, height: 200 }}
+          />
+        </View>
+        <Text style={{ fontSize: 20, fontWeight: "700", textAlign: "center" }}>
+          Enter PIN
+        </Text>
+        <TextInput
+          placeholder="••••"
+          secureTextEntry
+          keyboardType="number-pad"
+          value={pin}
+          onChangeText={setPin}
+          style={{
+            borderWidth: 1,
+            padding: 14,
+            borderRadius: 12,
+            textAlign: "center",
+            fontSize: 24,
+            letterSpacing: 4,
+          }}
+        />
+        <Button title="Unlock" onPress={onUnlock} />
+        {/* <Button title="Use biometrics" onPress={tryBiometric} /> */}
+      </View>
+    </>
   );
 }
