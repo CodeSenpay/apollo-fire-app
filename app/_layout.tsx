@@ -14,7 +14,7 @@ function GateWatcher() {
     (async () => {
       const pinOn = await isPinEnabled();
       // If PIN is on and not yet unlocked this session, force the verify screen
-      if (pinOn && unlocked && pathname !== "/login") {
+      if (pinOn && !unlocked && pathname !== "/login") {
         console.log(`IF 1: ${pinOn && !unlocked && pathname !== "/login"}`);
         router.replace("/login");
       }
@@ -30,20 +30,6 @@ function GateWatcher() {
 }
 
 export default function RootLayout() {
-  // const router = useRouter();
-  // const pathname = usePathname();
-
-  // // Re-lock whenever the app returns to the foreground
-  // useEffect(() => {
-  //   const sub = AppState.addEventListener("change", async (s) => {
-  //     if (s === "active") {
-  //       if (await isPinEnabled()) {
-  //         if (pathname !== "/login") router.replace("/login");
-  //       }
-  //     }
-  //   });
-  //   return () => sub.remove();
-  // }, [router, pathname]);
   return (
     <PinGateProvider>
       <GateWatcher />

@@ -1,5 +1,6 @@
 // app/pin-verify.tsx
 import { isPinEnabled, verifyPin } from "@/src/services/pin";
+import { usePinGate } from "@/src/state/pinGate";
 import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
 import { Alert, Button, Text, TextInput, View } from "react-native";
@@ -12,7 +13,7 @@ export default function PinVerify() {
   const router = useRouter();
   const [pin, setPin] = useState("");
   const [tries, setTries] = useState(0);
-
+  const { setUnlocked } = usePinGate();
   // If user disabled PIN while this screen is open, skip back to home
   useEffect(() => {
     (async () => {
@@ -24,6 +25,7 @@ export default function PinVerify() {
     const ok = await verifyPin(pin);
     console.log(`This is Okay Variable: ${ok}`);
     if (ok) {
+      setUnlocked(true);
       router.replace("/dashboard"); // go to dashboard
     } else {
       const next = tries + 1;
