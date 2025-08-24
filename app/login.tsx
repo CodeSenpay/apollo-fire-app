@@ -1,6 +1,7 @@
 // app/pin-verify.tsx
 import { isPinEnabled, verifyPin } from "@/src/services/pin";
 import { usePinGate } from "@/src/state/pinGate";
+import * as LocalAuthentication from "expo-local-authentication";
 import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
 import { Alert, Button, Image, Text, TextInput, View } from "react-native";
@@ -39,14 +40,18 @@ export default function PinVerify() {
     }
   }
 
-  // Optional biometrics:
-  // async function tryBiometric() {
-  //   const avail = await LocalAuthentication.hasHardwareAsync();
-  //   const enrolled = await LocalAuthentication.isEnrolledAsync();
-  //   if (!avail || !enrolled) return;
-  //   const res = await LocalAuthentication.authenticateAsync({ promptMessage: 'Unlock' });
-  //   if (res.success) router.replace('/');
-  // }
+  async function tryBiometric() {
+    const avail = await LocalAuthentication.hasHardwareAsync();
+    const enrolled = await LocalAuthentication.isEnrolledAsync();
+    if (!avail || !enrolled) return;
+    const res = await LocalAuthentication.authenticateAsync({
+      promptMessage: "Unlock",
+    });
+    if (res.success) {
+      setUnlocked(true);
+      router.replace("/dashboard");
+    }
+  }
 
   return (
     <>
@@ -84,7 +89,7 @@ export default function PinVerify() {
           }}
         />
         <Button title="Unlock" onPress={onUnlock} />
-        {/* <Button title="Use biometrics" onPress={tryBiometric} /> */}
+        <Button title="Use biometrics" onPress={tryBiometric} />
       </View>
     </>
   );
