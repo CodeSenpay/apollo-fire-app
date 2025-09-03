@@ -10,6 +10,8 @@ import { PinGateProvider, usePinGate } from "@/src/state/pinGate";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { Alert, Platform } from "react-native";
+import * as SecureStore from 'expo-secure-store'
+import * as Crypto from 'expo-crypto'
 
 // Show notifications even when app is foregrounded
 Notifications.setNotificationHandler({
@@ -23,34 +25,117 @@ Notifications.setNotificationHandler({
     }),
 });
 
-// Ask permission & get Expo push token
-async function registerForPushNotificationsAsync() {
-  if (!Device.isDevice) {
-    Alert.alert("Push notifications only work on a physical device.");
-    return null;
+async function generateUserId() {
+  const KEY = 'user_id'
+  const existing = await SecureStore.getItemAsync(KEY)
+  if (existing) return existing
+
+  try {
+    // returns a Uint8Array
+    const bytes = await Crypto.getRandomBytesAsync(16)
+    const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
+    const id = `user_${hex}`
+    await SecureStore.setItemAsync(KEY, id)
+    console.log('generated userId', id)
+    return id
+  } catch (err) {
+    console.error('generateUserId error', err)
+    // Fallback low-entropy id to avoid blocking flow
+    const fallback = `user_fallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`
+    await SecureStore.setItemAsync(KEY, fallback)
+    console.log('generated fallback userId', fallback)
+    return fallback
   }
-
-  // iOS: request permissions (Android usually granted by default)
-  const { status: existingStatus } = await Notifications.getPermissionsAsync();
-  let finalStatus = existingStatus;
-  if (existingStatus !== "granted") {
-    const { status } = await Notifications.requestPermissionsAsync();
-    finalStatus = status;
-  }
-  if (finalStatus !== "granted") {
-    Alert.alert("Permission not granted for push notifications.");
-    return null;
-  }
-
-  // Get the Expo push token
-  const token = (await Notifications.getExpoPushTokenAsync()).data;
-  console.log("Expo push token:", token);
-
-  // TODO: Save this token to your DB so your Cloud Function can send to it:
-  // e.g., Realtime DB path: /users/{uid}/expoPushTokens/{token} = true
-
-  return token;
 }
+
+
+// Ask permission & get Expo push token
+function extractExpoToken(raw:string) {
+  if (!raw) return null
+  const m = raw.match(/\[([^\]]+)\]/)
+  return m ? m[1] : null
+}
+
+export async function registerForPushNotificationsAsync() {
+  try {
+    if (!Device.isDevice) {
+      Alert.alert('Push notifications only work on a physical device.')
+      return null
+    }
+
+    const { status: existingStatus } = await Notifications.getPermissionsAsync()
+    let finalStatus = existingStatus
+    if (existingStatus !== 'granted') {
+      const { status } = await Notifications.requestPermissionsAsync()
+      finalStatus = status
+    }
+    if (finalStatus !== 'granted') {
+      Alert.alert('Permission not granted for push notifications.')
+      return null
+    }
+
+    const rawToken = (await Notifications.getExpoPushTokenAsync()).data
+    console.log('Expo push token raw', rawToken)
+
+    const token = extractExpoToken(rawToken) || rawToken
+    console.log('Expo push token extracted', token)
+
+    const userId = await generateUserId()
+
+    const PUSH_TOKEN_KEY = 'push_token'
+    const lastSentToken = await SecureStore.getItemAsync(PUSH_TOKEN_KEY)
+    console.log('lastSentToken', lastSentToken)
+
+    if (token === lastSentToken) {
+      console.log('Push token already up to date. Skipping register.')
+      return { token, userId }
+    }
+
+    const controller = new AbortController()
+    const timeoutMs = 10000
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+    try {
+      const response = await fetch('https://apollo-relay-server.onrender.com/register-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, token }),
+        signal: controller.signal
+      })
+
+      clearTimeout(timeoutId)
+
+      let bodyText = '<no body>'
+      try {
+        bodyText = await response.text()
+      } catch (e) {
+        bodyText = '<failed to read body>'
+      }
+
+      console.log('register-token status', response.status, 'body', bodyText)
+
+      if (response.ok) {
+        await SecureStore.setItemAsync(PUSH_TOKEN_KEY, token)
+        console.log('Saved push token to SecureStore')
+      } else {
+        console.warn('Server returned error status', response.status)
+      }
+    } catch (err:any) {
+      clearTimeout(timeoutId)
+      if (err.name === 'AbortError') {
+        console.error('register-token aborted by timeout')
+      } else {
+        console.error('register-token fetch error', err)
+      }
+    }
+
+    return { token, userId }
+  } catch (err) {
+    console.error('registerForPushNotificationsAsync outer error', err)
+    return null
+  }
+}
+
 
 function GateWatcher() {
   const router = useRouter();
