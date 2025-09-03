@@ -4,7 +4,7 @@ import { Stack, usePathname, useRouter } from "expo-router";
 import { useEffect, useRef } from "react";
 import "./global.css";
 
-import { PinGateProvider, usePinGate } from "@/src/state/pinGate";
+import { AuthProvider, useAuth } from "@/src/state/pinGate";
 
 // 🔔 NEW: notifications imports
 import * as Device from "expo-device";
@@ -140,7 +140,7 @@ export async function registerForPushNotificationsAsync() {
 function GateWatcher() {
   const router = useRouter();
   const pathname = usePathname();
-  const { unlocked } = usePinGate();
+  const { unlocked } = useAuth();
 
   useEffect(() => {
     (async () => {
@@ -211,7 +211,7 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <PinGateProvider>
+    <AuthProvider>
       <GateWatcher />
       <Stack>
         <Stack.Screen name="index" options={{ headerShown: false }} />
@@ -226,6 +226,6 @@ export default function RootLayout() {
         <Stack.Screen name="profile" options={{ headerShown: false }} />
         <Stack.Screen name="addsecurity" options={{ headerShown: false }} />
       </Stack>
-    </PinGateProvider>
+    </AuthProvider>
   );
 }

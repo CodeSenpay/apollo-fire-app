@@ -1,19 +1,21 @@
-// src/services/firebaseConfig.ts
 import { initializeApp } from "firebase/app";
-import { getDatabase, ref, onValue, set } from "firebase/database";
+import { getAuth } from "firebase/auth";
+import { getDatabase, ref, onValue, set, update } from "firebase/database";
 
+// Your web app's Firebase configuration using environment variables
 const firebaseConfig = {
-  apiKey: "AIzaSyBKFcyt_e5k9WJANZYipx8nzUVT7AFxd_Y",
-  authDomain: "apollo-fire-87ca5.firebaseapp.com",
-  databaseURL: "https://apollo-fire-87ca5-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "apollo-fire-87ca5",
-  storageBucket: "apollo-fire-87ca5.firebasestorage.app",
-  messagingSenderId: "952508768282",
-  appId: "1:952508768282:web:408d01c7cc0b722dbc71a3"
+  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  databaseURL: process.env.EXPO_PUBLIC_FIREBASE_DATABASE_URL,
+  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
 };
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
+export const auth = getAuth(app);
 export const db = getDatabase(app);
 
 // Type definition for your device data
@@ -42,6 +44,43 @@ export function subscribeToDevice(
 
 // new helper to request or cancel streaming
 export function requestStream(deviceId: string, requested: boolean) {
-  const ctrlPath = `devices/${deviceId}/controls/isStreamingRequested`
-  return set(ref(db, ctrlPath), requested)
+  const ctrlPath = `devices/${deviceId}/controls/isStreamingRequested`;
+  return set(ref(db, ctrlPath), requested);
 }
+
+/**
+ * Claims a device for a specific user.
+ * This function performs an atomic multi-path update to:
+ * 1. Create a new record in the secure `/devices/{deviceId}` path, setting the owner.
+ * 2. Delete the record from the public `/unclaimed_devices/{deviceId}` path.
+ * @param {string} deviceId The unique ID of the device to claim.
+ * @param {string} userId The UID of the user who is claiming the device.
+ * @returns {Promise<void>} A promise that resolves on success or rejects on failure.
+ */
+export const claimDevice = async (deviceId: string, userId: string) => {
+  if (!deviceId || !userId) {
+    throw new Error("Device ID and User ID are required to claim a device.");
+  }
+
+  console.log(`Attempting to claim device ${deviceId} for user ${userId}...`);
+
+  const updates: { [key: string]: any } = {};
+
+  // Path to the new, secure device record. We set the owner and some initial defaults.
+  updates[`/devices/${deviceId}/ownerUID`] = userId;
+  updates[`/devices/${deviceId}/controls/streamMode`] = "relay";
+  updates[`/devices/${deviceId}/controls/isStreamingRequested`] = false;
+
+  // Path to the public unclaimed record. Setting it to null deletes it.
+  updates[`/unclaimed_devices/${deviceId}`] = null;
+
+  try {
+    // This update runs as a single, atomic transaction.
+    await update(ref(db), updates);
+    console.log("Device claimed successfully!");
+  } catch (error) {
+    console.error("Failed to claim device:", error);
+    throw error;
+  }
+};
+
