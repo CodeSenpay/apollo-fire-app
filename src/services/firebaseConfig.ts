@@ -1,6 +1,12 @@
+import ReactNativeAsyncStorage from "@react-native-async-storage/async-storage";
 import { initializeApp } from "firebase/app";
-import { initializeAuth } from "firebase/auth";
+import * as firebaseAuth from 'firebase/auth';
+import {
+  initializeAuth,
+} from "firebase/auth";
 import { getDatabase, onValue, ref, set, update } from "firebase/database";
+
+const reactNativePersistence = (firebaseAuth as any).getReactNativePersistence;
 
 // Your web app's Firebase configuration using environment variables
 const firebaseConfig = {
@@ -14,11 +20,9 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase
-import AsyncStorage, { AsyncStorageStatic } from '@react-native-async-storage/async-storage';
-
 const app = initializeApp(firebaseConfig);
 export const auth = initializeAuth(app, {
-  persistence: getReactNativePersistence(AsyncStorage),
+  persistence: reactNativePersistence(ReactNativeAsyncStorage),
 });
 export const db = getDatabase(app);
 
@@ -87,8 +91,4 @@ export const claimDevice = async (deviceId: string, userId: string) => {
     throw error;
   }
 };
-
-function getReactNativePersistence(AsyncStorage: AsyncStorageStatic): import("firebase/auth").Persistence | import("firebase/auth").Persistence[] | undefined {
-  throw new Error("Function not implemented.");
-}
 
