@@ -1,7 +1,7 @@
 // app/_layout.tsx
 import { isPinEnabled } from "@/src/services/pin"; // adjust path if needed
 import { Stack, usePathname, useRouter } from "expo-router";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./global.css";
 
 import { AuthProvider, useAuth } from "@/src/state/pinGate";
@@ -111,26 +111,49 @@ export async function registerForPushNotificationsAsync() {
 }
 
 
+// This component now handles all auth/PIN redirection logic
 function GateWatcher() {
   const router = useRouter();
   const pathname = usePathname();
-  const { unlocked } = useAuth();
+  // Get all relevant state from the AuthProvider
+  const { isAuthenticated, loading, unlocked } = useAuth();
+  const [pinOn, setPinOn] = useState<boolean | null>(null);
 
   useEffect(() => {
-    (async () => {
-      const pinOn = await isPinEnabled();
-      // If PIN is on and not yet unlocked this session, force the verify screen
-      if (pinOn && !unlocked && pathname !== "/login") {
-        console.log(`IF 1: ${pinOn && !unlocked && pathname !== "/login"}`);
+    // Check if the PIN is enabled once
+    isPinEnabled().then(setPinOn);
+  }, []);
+
+  useEffect(() => {
+    // Wait until Firebase has checked the auth state and we know if PIN is enabled
+    if (loading || pinOn === null) {
+      return;
+    }
+
+    const isAuthScreen = pathname === "/auth";
+    const isPinScreen = pathname === "/login";
+
+    if (!isAuthenticated) {
+      // If the user is not logged in, they must be on the auth screen.
+      if (!isAuthScreen) {
+        router.replace("/auth");
+      }
+      return;
+    }
+
+    // If we reach here, the user is authenticated with Firebase.
+    // Now, we handle the PIN lock logic.
+    if (pinOn && !unlocked) {
+      // If PIN is required and the app is locked, force the PIN screen.
+      if (!isPinScreen) {
         router.replace("/login");
       }
-      // If PIN is off and we somehow are on /login, go home
-      if (!pinOn && pathname === "/login") {
-        console.log(`IF 2: ${!pinOn && pathname === "/login"}`);
-        router.replace("/dashboard");
-      }
-    })();
-  }, [pathname, unlocked]);
+    } else if (isAuthScreen || isPinScreen) {
+      // If the user is authenticated and unlocked (or has no PIN),
+      // they should not be on the auth or PIN screen. Send them to the dashboard.
+      router.replace("/dashboard");
+    }
+  }, [isAuthenticated, loading, pinOn, unlocked, pathname]);
 
   return null;
 }

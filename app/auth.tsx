@@ -1,97 +1,76 @@
 import { auth } from "@/src/services/firebaseConfig";
-import {
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-} from "firebase/auth";
+import { createUserWithEmailAndPassword, signInAnonymously } from "firebase/auth";
 import React, { useState } from "react";
-import {
-  Alert,
-  Image,
-  SafeAreaView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import { Alert, Image, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 
 export default function AuthScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = async () => {
-    if (!email || !password) {
-      return Alert.alert("Hold up!", "Please fill in both email and password.");
-    }
+  const handleGuestLogin = async () => {
     setLoading(true);
     try {
-      await signInWithEmailAndPassword(auth, email, password);
-      // On success, the AuthProvider in _layout will handle navigation
-    } catch (error: any) {
-      Alert.alert("Login Error", error.message);
-    } finally {
-      setLoading(false);
+      await signInAnonymously(auth);
+    } catch (e: any) {
+      Alert.alert("Guest Login Error", e.message);
     }
+    setLoading(false);
   };
 
   const handleSignUp = async () => {
     if (!email || !password) {
-      return Alert.alert("Hold up!", "Please fill in both email and password.");
+      Alert.alert("Hold up!", "Please fill in both email and password.");
+      return;
     }
     setLoading(true);
     try {
       await createUserWithEmailAndPassword(auth, email, password);
-      // On success, the AuthProvider in _layout will handle navigation
-    } catch (error: any) {
-      Alert.alert("Sign Up Error", error.message);
-    } finally {
-      setLoading(false);
+    } catch (e: any) {
+      Alert.alert("Sign Up Error", e.message);
     }
+    setLoading(false);
   };
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={{ paddingHorizontal: 24, flex: 1, justifyContent: 'center' }}>
         <View style={styles.logoContainer}>
-          <Image
-            source={require("../assets/images/icon.png")}
-            style={styles.logo}
-          />
+          <Image source={require("../assets/images/icon.png")} style={styles.logo} />
         </View>
         <Text style={styles.title}>Welcome to Apollo Fire</Text>
         <TextInput
           placeholder="Email"
+          style={styles.input}
+          autoCapitalize="none"
           value={email}
           onChangeText={setEmail}
-          autoCapitalize="none"
-          keyboardType="email-address"
-          style={styles.input}
+          editable={!loading}
         />
         <TextInput
           placeholder="Password"
+          style={styles.input}
           secureTextEntry
           value={password}
           onChangeText={setPassword}
-          style={styles.input}
+          editable={!loading}
         />
-
         <TouchableOpacity
           style={[styles.button, styles.buttonPrimary]}
-          onPress={handleLogin}
-          disabled={loading}
-        >
-          <Text style={styles.buttonTextPrimary}>
-            {loading ? "Logging in..." : "Login"}
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.button, styles.buttonSecondary]}
           onPress={handleSignUp}
           disabled={loading}
         >
+          <Text style={styles.buttonTextPrimary}>
+            {loading ? "Please wait..." : "Sign Up"}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.button, styles.buttonSecondary, { marginTop: 10 }]}
+          onPress={handleGuestLogin}
+          disabled={loading}
+        >
           <Text style={styles.buttonTextSecondary}>
-            {loading ? "Signing up..." : "Sign Up"}
+            {loading ? "Please wait..." : "Continue as Guest"}
           </Text>
         </TouchableOpacity>
       </View>
@@ -100,18 +79,9 @@ export default function AuthScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#fff",
-  },
-  logoContainer: {
-    alignItems: "center",
-  },
-  logo: {
-    width: 120,
-    height: 120,
-    marginBottom: 24,
-  },
+  container: { flex: 1, backgroundColor: "#fff" },
+  logoContainer: { alignItems: "center" },
+  logo: { width: 120, height: 120, marginBottom: 24 },
   title: {
     fontSize: 24,
     fontWeight: "700",
@@ -134,12 +104,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 12,
   },
-  buttonPrimary: {
-    backgroundColor: "#ef4444",
-  },
-  buttonSecondary: {
-    backgroundColor: "#f3f4f6",
-  },
+  buttonPrimary: { backgroundColor: "#ef4444" },
+  buttonSecondary: { backgroundColor: "#f3f4f6" },
   buttonTextPrimary: {
     color: "white",
     fontWeight: "600",
