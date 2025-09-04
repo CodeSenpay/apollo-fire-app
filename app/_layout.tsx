@@ -48,7 +48,8 @@ async function generateUserId() {
   }
 }
 
-const sendTokenToServer = async (token: string) => {
+// 2. Send the token to the server
+async function sendTokenToServer(token: string) {
   const userId = await generateUserId();
   const PUSH_TOKEN_KEY = 'push_token';
   const lastSentToken = await SecureStore.getItemAsync(PUSH_TOKEN_KEY);
@@ -67,34 +68,37 @@ const sendTokenToServer = async (token: string) => {
 
     if (response.ok) {
       await SecureStore.setItemAsync(PUSH_TOKEN_KEY, token);
-      console.log('Saved new push token.');
+      console.log('Successfully saved new push token.');
     } else {
-      console.warn('Failed to register push token with the server.');
+      console.error('Failed to register token with server:', await response.text());
     }
   } catch (error) {
     console.error('Error sending push token to server:', error);
   }
-};
+}
 
-const getPushNotificationToken = async (): Promise<string | null> => {
+// 1. Get the push token
+async function getPushNotificationToken(): Promise<string | null> {
   if (!Device.isDevice) {
-    Alert.alert('Push notifications only work on a physical device.');
+    Alert.alert('Push notifications are only supported on physical devices.');
     return null;
   }
 
-  const { status } = await Notifications.getPermissionsAsync();
-  if (status !== 'granted') {
-    const { status: newStatus } = await Notifications.requestPermissionsAsync();
-    if (newStatus !== 'granted') {
-      Alert.alert('Permission not granted for push notifications.');
-      return null;
-    }
+  let { status: finalStatus } = await Notifications.getPermissionsAsync();
+  if (finalStatus !== 'granted') {
+    const { status } = await Notifications.requestPermissionsAsync();
+    finalStatus = status;
   }
 
-  const tokenData = await Notifications.getExpoPushTokenAsync();
-  return tokenData.data;
-};
+  if (finalStatus !== 'granted') {
+    Alert.alert('Permission not granted for push notifications.');
+    return null;
+  }
 
+  return (await Notifications.getExpoPushTokenAsync()).data;
+}
+
+// 3. The main function to coordinate the process
 export async function registerForPushNotificationsAsync() {
   try {
     const token = await getPushNotificationToken();
@@ -102,7 +106,7 @@ export async function registerForPushNotificationsAsync() {
       await sendTokenToServer(token);
     }
   } catch (error) {
-    console.error('Failed to register for push notifications:', error);
+    console.error('An error occurred during push notification registration:', error);
   }
 }
 
