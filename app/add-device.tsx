@@ -1,6 +1,6 @@
 import { claimDevice } from "@/src/services/firebaseConfig";
 import { useAuth } from "@/src/state/pinGate"; // FIX: Correct import path for useAuth
-import { CameraView, Camera } from "expo-camera"; // FIX: Import CameraView for the component
+import { Camera, CameraView } from "expo-camera"; // FIX: Import CameraView for the component
 import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
 import { Alert, StyleSheet, Text, View } from "react-native";
@@ -19,37 +19,36 @@ export default function AddDeviceScreen() {
     getCameraPermissions();
   }, []);
 
+  const handleClaimDevice = async (deviceId: string) => {
+    if (!user) return;
+    try {
+      await claimDevice(deviceId, user.uid);
+      Alert.alert('Success', 'Device claimed successfully!');
+      router.back();
+    } catch (error) {
+      Alert.alert('Claim Failed', 'This device might already be claimed, or an error occurred.');
+      setScanned(false);
+    }
+  };
+
   const handleBarcodeScanned = async ({ data }: { data: string }) => {
     if (scanned) return;
     setScanned(true);
 
-    const deviceId = data;
     if (!user) {
-      Alert.alert("Error", "You must be logged in to claim a device.");
+      Alert.alert('Error', 'You must be logged in to claim a device.');
       router.back();
       return;
     }
 
     Alert.alert(
-      "Device Scanned!",
-      `Scanned device ID: ${deviceId}\n\nDo you want to claim this device?`,
+      'Device Scanned!',
+      `Scanned device ID: ${data}\n\nDo you want to claim this device?`,
       [
-        { text: "Cancel", onPress: () => setScanned(false), style: "cancel" },
+        { text: 'Cancel', onPress: () => setScanned(false), style: 'cancel' },
         {
-          text: "Claim",
-          onPress: async () => {
-            try {
-              await claimDevice(deviceId, user.uid);
-              Alert.alert("Success", "Device claimed successfully!");
-              router.back(); // Go back to the device list
-            } catch (error) {
-              Alert.alert(
-                "Claim Failed",
-                "This device might already be claimed, or an error occurred."
-              );
-              setScanned(false);
-            }
-          },
+          text: 'Claim',
+          onPress: () => handleClaimDevice(data),
         },
       ]
     );
