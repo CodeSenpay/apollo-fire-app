@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
-import { getDatabase, ref, onValue, set, update } from "firebase/database";
+import { getDatabase, onValue, ref, set, update } from "firebase/database";
 
 // Your web app's Firebase configuration using environment variables
 const firebaseConfig = {

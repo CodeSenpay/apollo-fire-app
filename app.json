@@ -21,7 +21,9 @@
         "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.apollofireapp",
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "bundler": "metro",

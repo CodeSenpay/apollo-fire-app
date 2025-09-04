@@ -1,6 +1,6 @@
 // app/pin-verify.tsx
 import { isPinEnabled, verifyPin } from "@/src/services/pin";
-import { usePinGate } from "@/src/state/pinGate";
+import { useAuth } from "@/src/state/pinGate";
 import * as LocalAuthentication from "expo-local-authentication";
 import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
@@ -14,7 +14,7 @@ export default function PinVerify() {
   const router = useRouter();
   const [pin, setPin] = useState("");
   const [tries, setTries] = useState(0);
-  const { setUnlocked } = usePinGate();
+  const { setUnlocked } = useAuth();
   // If user disabled PIN while this screen is open, skip back to home
   useEffect(() => {
     (async () => {

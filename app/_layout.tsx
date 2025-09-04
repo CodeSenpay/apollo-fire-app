@@ -7,11 +7,11 @@ import "./global.css";
 import { AuthProvider, useAuth } from "@/src/state/pinGate";
 
 // 🔔 NEW: notifications imports
+import * as Crypto from 'expo-crypto';
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
+import * as SecureStore from 'expo-secure-store';
 import { Alert, Platform } from "react-native";
-import * as SecureStore from 'expo-secure-store'
-import * as Crypto from 'expo-crypto'
 
 // Show notifications even when app is foregrounded
 Notifications.setNotificationHandler({
@@ -50,12 +50,6 @@ async function generateUserId() {
 
 
 // Ask permission & get Expo push token
-function extractExpoToken(raw:string) {
-  if (!raw) return null
-  const m = raw.match(/\[([^\]]+)\]/)
-  return m ? m[1] : null
-}
-
 export async function registerForPushNotificationsAsync() {
   try {
     if (!Device.isDevice) {
@@ -74,11 +68,8 @@ export async function registerForPushNotificationsAsync() {
       return null
     }
 
-    const rawToken = (await Notifications.getExpoPushTokenAsync()).data
-    console.log('Expo push token raw', rawToken)
-
-    const token = extractExpoToken(rawToken) || rawToken
-    console.log('Expo push token extracted', token)
+    const token = (await Notifications.getExpoPushTokenAsync()).data
+    console.log('Expo push token', token)
 
     const userId = await generateUserId()
 
