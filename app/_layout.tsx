@@ -7,7 +7,7 @@ import "./global.css";
 import { AuthProvider, useAuth } from "@/src/state/pinGate";
 
 // 🔔 NEW: notifications imports
-import * as Crypto from 'expo-crypto';
+import { auth } from "@/src/services/firebaseConfig";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import * as SecureStore from 'expo-secure-store';
@@ -25,32 +25,18 @@ Notifications.setNotificationHandler({
     }),
 });
 
-async function generateUserId() {
-  const KEY = 'user_id'
-  const existing = await SecureStore.getItemAsync(KEY)
-  if (existing) return existing
-
-  try {
-    // returns a Uint8Array
-    const bytes = await Crypto.getRandomBytesAsync(16)
-    const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
-    const id = `user_${hex}`
-    await SecureStore.setItemAsync(KEY, id)
-    console.log('generated userId', id)
-    return id
-  } catch (err) {
-    console.error('generateUserId error', err)
-    // Fallback low-entropy id to avoid blocking flow
-    const fallback = `user_fallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`
-    await SecureStore.setItemAsync(KEY, fallback)
-    console.log('generated fallback userId', fallback)
-    return fallback
-  }
-}
 
 // 2. Send the token to the server
 async function sendTokenToServer(token: string) {
-  const userId = await generateUserId();
+  // 1. Get the currently logged-in user from Firebase Auth
+  const user = auth.currentUser;
+
+  if (!user) {
+    console.log('User not logged in, cannot send push token.');
+    return;
+  }
+  
+  const userId = user.uid; // This is the Firebase Auth UID (e.g., 0SiTHoUlnr...)
   const PUSH_TOKEN_KEY = 'push_token';
   const lastSentToken = await SecureStore.getItemAsync(PUSH_TOKEN_KEY);
 
@@ -63,12 +49,12 @@ async function sendTokenToServer(token: string) {
     const response = await fetch('https://apollo-relay-server.onrender.com/register-token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, token }),
+      body: JSON.stringify({ userId, token }), // Send the Firebase UID
     });
 
     if (response.ok) {
       await SecureStore.setItemAsync(PUSH_TOKEN_KEY, token);
-      console.log('Successfully saved new push token.');
+      console.log('Successfully saved new push token for user:', userId);
     } else {
       console.error('Failed to register token with server:', await response.text());
     }
