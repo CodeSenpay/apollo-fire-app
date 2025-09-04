@@ -6,11 +6,11 @@ import "./global.css";
 
 import { AuthProvider, useAuth } from "@/src/state/pinGate";
 
-// 🔔 NEW: notifications imports
-import { auth } from "@/src/services/firebaseConfig";
+// 🔔 MODIFIED: Firebase and notifications imports
+import { auth, db } from "@/src/services/firebaseConfig";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
-import * as SecureStore from 'expo-secure-store';
+import { get, ref, set } from "firebase/database";
 import { Alert, Platform } from "react-native";
 
 // Show notifications even when app is foregrounded
@@ -25,93 +25,87 @@ Notifications.setNotificationHandler({
     }),
 });
 
-
-// 2. Send the token to the server
-async function sendTokenToServer(token: string) {
-  // 1. Get the currently logged-in user from Firebase Auth
+// 🔔 NEW: This function now checks and saves the token directly to Firebase RTDB
+async function registerTokenInFirebase(token: string) {
   const user = auth.currentUser;
-
   if (!user) {
-    console.log('User not logged in, cannot send push token.');
+    console.log("User not logged in, cannot register FCM token.");
     return;
   }
-  
-  const userId = user.uid; // This is the Firebase Auth UID (e.g., 0SiTHoUlnr...)
-  const PUSH_TOKEN_KEY = 'push_token';
-  const lastSentToken = await SecureStore.getItemAsync(PUSH_TOKEN_KEY);
 
-  if (token === lastSentToken) {
-    console.log('Push token is already up to date.');
-    return;
-  }
+  const userId = user.uid;
+  const tokenRef = ref(db, `users/${userId}/fcmToken`);
 
   try {
-    const response = await fetch('https://apollo-relay-server.onrender.com/register-token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, token }), // Send the Firebase UID
-    });
+    const snapshot = await get(tokenRef);
+    const existingToken = snapshot.val();
 
-    if (response.ok) {
-      await SecureStore.setItemAsync(PUSH_TOKEN_KEY, token);
-      console.log('Successfully saved new push token for user:', userId);
-    } else {
-      console.error('Failed to register token with server:', await response.text());
+    // Only update Firebase if the token is new or doesn't exist yet
+    if (existingToken === token) {
+      console.log("FCM token is already up to date in Firebase.");
+      return;
     }
+
+    await set(tokenRef, token);
+    console.log("Successfully saved new FCM token for user:", userId);
   } catch (error) {
-    console.error('Error sending push token to server:', error);
+    console.error("Error saving FCM token to Firebase:", error);
   }
 }
 
-// 1. Get the push token
+// Get the push token (no changes here)
 async function getPushNotificationToken(): Promise<string | null> {
   if (!Device.isDevice) {
-    Alert.alert('Push notifications are only supported on physical devices.');
+    Alert.alert("Push notifications are only supported on physical devices.");
     return null;
   }
 
   let { status: finalStatus } = await Notifications.getPermissionsAsync();
-  if (finalStatus !== 'granted') {
+  if (finalStatus !== "granted") {
     const { status } = await Notifications.requestPermissionsAsync();
     finalStatus = status;
   }
 
-  if (finalStatus !== 'granted') {
-    Alert.alert('Permission not granted for push notifications.');
+  if (finalStatus !== "granted") {
+    Alert.alert("Permission not granted for push notifications.");
     return null;
   }
 
-  return (await Notifications.getExpoPushTokenAsync()).data;
+  // Use your Expo project ID
+  return (await Notifications.getExpoPushTokenAsync({
+      projectId: process.env.EXPO_PUBLIC_EAS_PROJECT_ID,
+  })).data;
 }
 
-// 3. The main function to coordinate the process
+// Main function to coordinate the process (now uses the new Firebase function)
 export async function registerForPushNotificationsAsync() {
   try {
     const token = await getPushNotificationToken();
     if (token) {
-      await sendTokenToServer(token);
+      await registerTokenInFirebase(token);
     }
   } catch (error) {
-    console.error('An error occurred during push notification registration:', error);
+    console.error(
+      "An error occurred during push notification registration:",
+      error
+    );
   }
 }
 
-
-// This component now handles all auth/PIN redirection logic
+// This component now handles all auth/PIN redirection and push registration logic
 function GateWatcher() {
   const router = useRouter();
   const pathname = usePathname();
-  // Get all relevant state from the AuthProvider
   const { isAuthenticated, loading, unlocked } = useAuth();
   const [pinOn, setPinOn] = useState<boolean | null>(null);
+  // 🔔 NEW: Ref to ensure push registration only happens once per session
+  const pushRegistrationAttempted = useRef(false);
 
   useEffect(() => {
-    // Check if the PIN is enabled once
     isPinEnabled().then(setPinOn);
   }, []);
 
   useEffect(() => {
-    // Wait until Firebase has checked the auth state and we know if PIN is enabled
     if (loading || pinOn === null) {
       return;
     }
@@ -120,23 +114,29 @@ function GateWatcher() {
     const isPinScreen = pathname === "/login";
 
     if (!isAuthenticated) {
-      // If the user is not logged in, they must be on the auth screen.
+      // If user signs out, allow them to re-register on next login
+      pushRegistrationAttempted.current = false;
       if (!isAuthScreen) {
         router.replace("/auth");
       }
       return;
     }
 
-    // If we reach here, the user is authenticated with Firebase.
-    // Now, we handle the PIN lock logic.
+    // 🔔 NEW LOGIC:
+    // Once the user is authenticated, attempt to register for push notifications.
+    // The ref ensures this only runs once per authenticated session.
+    if (!pushRegistrationAttempted.current) {
+      pushRegistrationAttempted.current = true; // Mark as attempted
+      registerForPushNotificationsAsync().catch((e) =>
+        console.warn("Push registration failed:", e)
+      );
+    }
+
     if (pinOn && !unlocked) {
-      // If PIN is required and the app is locked, force the PIN screen.
       if (!isPinScreen) {
         router.replace("/login");
       }
     } else if (isAuthScreen || isPinScreen) {
-      // If the user is authenticated and unlocked (or has no PIN),
-      // they should not be on the auth or PIN screen. Send them to the dashboard.
       router.replace("/dashboard");
     }
   }, [isAuthenticated, loading, pinOn, unlocked, pathname]);
@@ -145,12 +145,10 @@ function GateWatcher() {
 }
 
 export default function RootLayout() {
-  // 🔔 NEW: refs to clean up listeners
   const notificationListener = useRef<Notifications.Subscription | null>(null);
   const responseListener = useRef<Notifications.Subscription | null>(null);
 
   useEffect(() => {
-    // ANDROID: Create a high-importance channel once on startup
     if (Platform.OS === "android") {
       Notifications.setNotificationChannelAsync("critical", {
         name: "Critical Alerts",
@@ -162,25 +160,16 @@ export default function RootLayout() {
       });
     }
 
-    // Register for push + get token
-    registerForPushNotificationsAsync().catch((e) =>
-      console.warn("Push registration failed:", e)
-    );
+    // 🔔 REMOVED: Push registration is now handled by GateWatcher
 
-    // Foreground notifications (app open)
     notificationListener.current =
       Notifications.addNotificationReceivedListener((notification) => {
-        // Optional: show a toast/snackbar, update in-app state, etc.
         console.log("Notification received (foreground):", notification);
       });
 
-    // When user taps a notification (from bg/terminated)
     responseListener.current =
       Notifications.addNotificationResponseReceivedListener((response) => {
         console.log("Notification tapped:", response);
-        // Example: deep link by deviceId in payload:
-        // const deviceId = response.notification.request.content.data?.deviceId as string | undefined;
-        // if (deviceId) router.push(`/device/${deviceId}`);
       });
 
     return () => {
