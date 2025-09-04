@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import { initializeAuth } from "firebase/auth";
 import { getDatabase, onValue, ref, set, update } from "firebase/database";
 
 // Your web app's Firebase configuration using environment variables
@@ -14,8 +14,12 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase
+import AsyncStorage, { AsyncStorageStatic } from '@react-native-async-storage/async-storage';
+
 const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
+export const auth = initializeAuth(app, {
+  persistence: getReactNativePersistence(AsyncStorage),
+});
 export const db = getDatabase(app);
 
 // Type definition for your device data
@@ -83,4 +87,8 @@ export const claimDevice = async (deviceId: string, userId: string) => {
     throw error;
   }
 };
+
+function getReactNativePersistence(AsyncStorage: AsyncStorageStatic): import("firebase/auth").Persistence | import("firebase/auth").Persistence[] | undefined {
+  throw new Error("Function not implemented.");
+}
 
