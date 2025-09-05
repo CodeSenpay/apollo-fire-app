@@ -1,7 +1,7 @@
 import { db, requestStream, setStreamMode, subscribeToDevice } from '@/src/services/firebaseConfig';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { get, onValue, ref } from 'firebase/database';
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Dimensions, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 
@@ -32,33 +32,18 @@ export default function DeviceDetailScreen() {
     navigation.setOptions({ title: `Device: ${deviceId?.slice(0, 12)}...` });
   }, [navigation, deviceId]);
 
-  useEffect(() => {
-    if (!deviceId) return;
-
-    mountedRef.current = true;
-
-    const modeRef = ref(db, `devices/${deviceId}/controls/streamMode`);
-    const unsubscribeMode = onValue(modeRef, (snapshot) => {
-      const mode = snapshot.exists() ? snapshot.val() : 'relay';
-      if (mountedRef.current) {
-        setCurrentMode(mode);
-        fetchStreamUrl(mode);
-      }
-    });
-
-    const unsubscribeReadings = subscribeToDevice(deviceId, (data) => {
-      if (!mountedRef.current || !data) return;
-      setReadings({
-        temperature: typeof data.temperature === 'number' ? data.temperature : 'N/A',
-        gasValue: typeof data.gasValue === 'number' ? data.gasValue : 'N/A',
-        isFlameDetected: data.isFlameDetected === 1,
-        isCriticalAlert: data.isCriticalAlert === 1,
-        lastUpdate: typeof data.lastUpdate === 'number' ? data.lastUpdate : 'N/A',
-      });
-    });
-
-    const fetchStreamUrl = async (mode: 'local' | 'relay') => {
+  // --- Stream connection logic ---
+  // This function fetches the stream URL and checks its status
+  const tryConnectStream = useCallback(
+    async (modeOverride?: 'local' | 'relay') => {
       if (!deviceId) return;
+      setStreamStatus('connecting');
+      setLastError(null);
+      setStreamUrl(null);
+
+      let mode = currentMode;
+      if (modeOverride) mode = modeOverride;
+
       try {
         let finalUrl = '';
         if (mode === 'relay') {
@@ -82,80 +67,126 @@ export default function DeviceDetailScreen() {
         }
         if (mountedRef.current) {
           setStreamUrl(finalUrl);
-          checkStreamStatus(finalUrl);
+          // Now check if the stream is online
+          setStreamStatus('connecting');
+          setLastError(null);
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+            const res = await fetch(finalUrl, { signal: controller.signal });
+            clearTimeout(timeoutId);
+
+            if (res.ok) {
+              setStreamStatus('online');
+            } else {
+              setStreamStatus('offline');
+              setLastError(`Stream is offline (status: ${res.status})`);
+            }
+          } catch (error) {
+            if (!mountedRef.current) return;
+            setStreamStatus('error');
+            setLastError('Failed to connect to the stream.');
+          }
         }
       } catch (e: any) {
         if (mountedRef.current) {
-            setStreamUrl(null);
-            setLastError(e.message);
-            setStreamStatus('error');
+          setStreamUrl(null);
+          setLastError(e.message);
+          setStreamStatus('error');
         }
       }
-    };
+    },
+    [deviceId, currentMode]
+  );
+
+  // On mount: subscribe to controls and readings, and try to connect to stream
+  useEffect(() => {
+    if (!deviceId) return;
+
+    mountedRef.current = true;
+
+    // Subscribe to controls to keep currentMode in sync
+    const controlsRef = ref(db, `devices/${deviceId}/controls`);
+    const unsubscribeControls = onValue(controlsRef, (snapshot) => {
+      const controls = snapshot.val();
+      if (mountedRef.current && controls) {
+        setCurrentMode(controls.streamMode || 'relay');
+      }
+    });
+
+    // Subscribe to readings
+    const unsubscribeReadings = subscribeToDevice(deviceId, (data) => {
+      if (!mountedRef.current || !data) return;
+      setReadings({
+        temperature: typeof data.temperature === 'number' ? data.temperature : 'N/A',
+        gasValue: typeof data.gasValue === 'number' ? data.gasValue : 'N/A',
+        isFlameDetected: data.isFlameDetected === 1,
+        isCriticalAlert: data.isCriticalAlert === 1,
+        lastUpdate: typeof data.lastUpdate === 'number' ? data.lastUpdate : 'N/A',
+      });
+    });
+
+    // Request stream and try to connect on mount
+    requestStream(deviceId, true);
+    tryConnectStream();
 
     return () => {
       mountedRef.current = false;
-      unsubscribeMode();
+      unsubscribeControls();
       unsubscribeReadings();
+      if (deviceId) {
+        requestStream(deviceId, false);
+      }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deviceId]);
 
-  const checkStreamStatus = async (urlToCheck: string) => {
-    if (!mountedRef.current || !urlToCheck) return;
-    setStreamStatus('connecting');
-    setLastError(null);
+  // When currentMode changes (by user), try to connect to the stream in the new mode
+  useEffect(() => {
+    if (!deviceId) return;
+    tryConnectStream();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentMode, deviceId]);
 
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      const res = await fetch(urlToCheck, { signal: controller.signal });
-      clearTimeout(timeoutId);
-
-      if (res.ok) {
-        setStreamStatus('online');
-      } else {
-        setStreamStatus('offline');
-        setLastError(`Stream is offline (status: ${res.status})`);
-      }
-    } catch (error) {
-      if (!mountedRef.current) return;
-      setStreamStatus('error');
-      setLastError('Failed to connect to the stream.');
-    }
+  // Handler for retry button
+  const handleRetry = () => {
+    if (!deviceId) return;
+    requestStream(deviceId, true);
+    tryConnectStream();
   };
 
-  const handleStartStream = async () => {
+  // Handler for mode switch
+  const handleModeSwitch = (mode: 'local' | 'relay') => {
     if (!deviceId) return;
-    try {
-      await requestStream(deviceId, true);
-    } catch (error) {
-      setLastError('Failed to send start request.');
-    }
+    setStreamMode(deviceId, mode);
+    setCurrentMode(mode);
+    // tryConnectStream will be triggered by useEffect on currentMode change
   };
 
   const renderContent = () => {
-    if (!streamUrl && streamStatus !== 'offline' && streamStatus !== 'error') {
+    if (streamStatus === 'connecting') {
       return (
         <View style={styles.centered}>
           <ActivityIndicator size="large" />
-          <Text style={styles.loadingText}>Loading Stream...</Text>
+          <Text style={styles.loadingText}>Connecting to Stream...</Text>
         </View>
       );
     }
-    switch (streamStatus) {
-      case 'online':
-        return <WebView source={{ uri: streamUrl! }} style={styles.webview} />;
-      default:
-        return (
-          <View style={styles.offline}>
-            <Text style={styles.offlineText}>STREAM OFFLINE</Text>
-            {lastError && <Text style={styles.errorText}>{lastError}</Text>}
-            <TouchableOpacity style={styles.startButton} onPress={handleStartStream}>
-              <Text style={styles.buttonText}>Request Stream</Text>
-            </TouchableOpacity>
-          </View>
-        );
+
+    if (streamStatus === 'online' && streamUrl) {
+      return <WebView source={{ uri: streamUrl }} style={styles.webview} />;
     }
+
+    // Show retry button if failed or errors
+    return (
+      <View style={styles.offline}>
+        <Text style={styles.offlineText}>STREAM OFFLINE</Text>
+        {lastError && <Text style={styles.errorText}>{lastError}</Text>}
+        <TouchableOpacity style={styles.startButton} onPress={handleRetry}>
+          <Text style={styles.buttonText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
   };
 
   if (!deviceId) {
@@ -175,12 +206,12 @@ export default function DeviceDetailScreen() {
       <View style={styles.selectorContainer}>
         <TouchableOpacity
           style={[styles.selectorButton, currentMode === 'local' && styles.selectorActive]}
-          onPress={() => setStreamMode(deviceId, 'local')}>
+          onPress={() => handleModeSwitch('local')}>
           <Text style={[styles.selectorText, currentMode === 'local' && styles.selectorTextActive]}>Local</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.selectorButton, currentMode === 'relay' && styles.selectorActive]}
-          onPress={() => setStreamMode(deviceId, 'relay')}>
+          onPress={() => handleModeSwitch('relay')}>
           <Text style={[styles.selectorText, currentMode === 'relay' && styles.selectorTextActive]}>Relay</Text>
         </TouchableOpacity>
       </View>
