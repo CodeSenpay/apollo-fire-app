@@ -1,4 +1,3 @@
-import Navbar from "@/src/components/navbar";
 import { Ionicons } from "@expo/vector-icons";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Link } from "expo-router";
@@ -12,7 +11,7 @@ function HomeScreen() {
   return <HomePage />;
 }
 
-function CameraScreen() {
+function DevicesScreen() {
   return <CameraPage />;
 }
 
@@ -34,7 +33,7 @@ export default function Dashboard() {
 
             if (route.name === "Home") {
               iconName = focused ? "home" : "home-outline";
-            } else if (route.name === "Camera") {
+            } else if (route.name === "Devices") {
               iconName = focused ? "camera" : "camera-outline";
             } else if (route.name === "Me") {
               iconName = focused ? "person" : "person-outline";
@@ -63,8 +62,8 @@ export default function Dashboard() {
           }}
         />
         <Tab.Screen
-          name="Camera"
-          component={CameraScreen}
+          name="Devices"
+          component={DevicesScreen}
           options={{ headerTitle: "Live Stream", headerShown: true }}
         />
         <Tab.Screen

@@ -4,7 +4,7 @@ import * as firebaseAuth from 'firebase/auth';
 import {
   initializeAuth,
 } from "firebase/auth";
-import { getDatabase, onValue, ref, set, update } from "firebase/database";
+import { get, getDatabase, off, onValue, ref, set, update } from "firebase/database";
 
 const reactNativePersistence = (firebaseAuth as any).getReactNativePersistence;
 
@@ -33,6 +33,39 @@ export interface DeviceData {
   isFlameDetected: number;
   isCriticalAlert: number;
   lastUpdate: number;
+}
+
+export function setStreamMode(
+  deviceId: string,
+  mode: 'local' | 'relay'
+) {
+  const streamModeRef = ref(db, `devices/${deviceId}/controls/streamMode`);
+  return set(streamModeRef, mode);
+}
+
+export function subscribeToUserDevices(
+  userId: string,
+  callback: (deviceIds: string[]) => void
+) {
+  const devicesRef = ref(db, `users/${userId}/devices`);
+  const listener = onValue(devicesRef, (snapshot) => {
+    if (snapshot.exists()) {
+      const deviceIds = Object.keys(snapshot.val());
+      callback(deviceIds);
+    } else {
+      callback([]);
+    }
+  });
+
+  // Return the unsubscribe function
+  return () => off(devicesRef, 'value', listener);
+}
+
+// Gets the static details of a device, like its owner-assigned name
+export async function getDeviceDetails(deviceId: string) {
+  const detailRef = ref(db, `devices/${deviceId}/details`);
+  const snapshot = await get(detailRef);
+  return snapshot.exists() ? snapshot.val() : { name: `Device ${deviceId.slice(0, 6)}` };
 }
 
 // Function to subscribe to device updates
