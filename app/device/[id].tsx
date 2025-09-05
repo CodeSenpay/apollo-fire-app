@@ -1,10 +1,26 @@
 import { db, requestStream, setStreamMode, subscribeToDevice } from '@/src/services/firebaseConfig';
+import * as Network from 'expo-network';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { get, onValue, ref } from 'firebase/database';
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Dimensions, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
+import {
+  ActivityIndicator,
+  Dimensions,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { WebView } from 'react-native-webview';
 
+// --- Types ---
 type Readings = {
   temperature: number | 'N/A';
   gasValue: number | 'N/A';
@@ -14,7 +30,10 @@ type Readings = {
 };
 type StreamStatus = 'connecting' | 'online' | 'offline' | 'error';
 
+// --- Main Component ---
 export default function DeviceDetailScreen() {
+  // --- State ---
+  const [isWifiConnected, setIsWifiConnected] = useState(true);
   const { id: deviceId } = useLocalSearchParams<{ id: string }>();
   const navigation = useNavigation();
 
@@ -23,17 +42,30 @@ export default function DeviceDetailScreen() {
   const [lastError, setLastError] = useState<string | null>(null);
   const [currentMode, setCurrentMode] = useState<'local' | 'relay'>('relay');
   const [readings, setReadings] = useState<Readings>({
-    temperature: 'N/A', gasValue: 'N/A', isFlameDetected: false, isCriticalAlert: false, lastUpdate: 'N/A',
+    temperature: 'N/A',
+    gasValue: 'N/A',
+    isFlameDetected: false,
+    isCriticalAlert: false,
+    lastUpdate: 'N/A',
   });
 
   const mountedRef = useRef(true);
 
+  // --- Set navigation title ---
   useLayoutEffect(() => {
     navigation.setOptions({ title: `Device: ${deviceId?.slice(0, 12)}...` });
   }, [navigation, deviceId]);
 
-  // --- Stream connection logic ---
-  // This function fetches the stream URL and checks its status
+  // --- Check Wi-Fi connection ---
+  const checkNetwork = async () => {
+    const networkState = await Network.getNetworkStateAsync();
+    if (mountedRef.current) {
+      setIsWifiConnected(networkState.type === Network.NetworkStateType.WIFI);
+    }
+  };
+  checkNetwork();
+
+  // --- Try to connect to stream (fetch URL and check status) ---
   const tryConnectStream = useCallback(
     async (modeOverride?: 'local' | 'relay') => {
       if (!deviceId) return;
@@ -47,6 +79,7 @@ export default function DeviceDetailScreen() {
       try {
         let finalUrl = '';
         if (mode === 'relay') {
+          // Get relay stream URL from database
           const urlRef = ref(db, `devices/${deviceId}/streamBaseUrl`);
           const snapshot = await get(urlRef);
           if (snapshot.exists()) {
@@ -55,6 +88,7 @@ export default function DeviceDetailScreen() {
             throw new Error('Relay stream URL not configured.');
           }
         } else {
+          // Get local stream URL from database
           const urlRef = ref(db, `devices/${deviceId}/controls/streamUrl`);
           const snapshot = await get(urlRef);
           if (snapshot.exists() && snapshot.val()) {
@@ -65,11 +99,13 @@ export default function DeviceDetailScreen() {
             return;
           }
         }
+
         if (mountedRef.current) {
           setStreamUrl(finalUrl);
-          // Now check if the stream is online
           setStreamStatus('connecting');
           setLastError(null);
+
+          // Check if stream is online
           try {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 5000);
@@ -99,13 +135,12 @@ export default function DeviceDetailScreen() {
     [deviceId, currentMode]
   );
 
-  // On mount: subscribe to controls and readings, and try to connect to stream
+  // --- Subscribe to controls and readings on mount, and connect to stream ---
   useEffect(() => {
     if (!deviceId) return;
-
     mountedRef.current = true;
 
-    // Subscribe to controls to keep currentMode in sync
+    // Subscribe to controls (sync currentMode)
     const controlsRef = ref(db, `devices/${deviceId}/controls`);
     const unsubscribeControls = onValue(controlsRef, (snapshot) => {
       const controls = snapshot.val();
@@ -114,7 +149,7 @@ export default function DeviceDetailScreen() {
       }
     });
 
-    // Subscribe to readings
+    // Subscribe to sensor readings
     const unsubscribeReadings = subscribeToDevice(deviceId, (data) => {
       if (!mountedRef.current || !data) return;
       setReadings({
@@ -126,10 +161,11 @@ export default function DeviceDetailScreen() {
       });
     });
 
-    // Request stream and try to connect on mount
+    // Request stream and connect on mount
     requestStream(deviceId, true);
     tryConnectStream();
 
+    // Cleanup on unmount
     return () => {
       mountedRef.current = false;
       unsubscribeControls();
@@ -141,21 +177,21 @@ export default function DeviceDetailScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deviceId]);
 
-  // When currentMode changes (by user), try to connect to the stream in the new mode
+  // --- Reconnect to stream when mode changes ---
   useEffect(() => {
     if (!deviceId) return;
     tryConnectStream();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentMode, deviceId]);
 
-  // Handler for retry button
+  // --- Retry stream connection handler ---
   const handleRetry = () => {
     if (!deviceId) return;
     requestStream(deviceId, true);
     tryConnectStream();
   };
 
-  // Handler for mode switch
+  // --- Mode switch handler ---
   const handleModeSwitch = (mode: 'local' | 'relay') => {
     if (!deviceId) return;
     setStreamMode(deviceId, mode);
@@ -163,7 +199,20 @@ export default function DeviceDetailScreen() {
     // tryConnectStream will be triggered by useEffect on currentMode change
   };
 
+  // --- Render video/stream content ---
   const renderContent = () => {
+    // Show Wi-Fi required message for local mode
+    if (currentMode === 'local' && !isWifiConnected) {
+      return (
+        <View style={styles.offline}>
+          <Text style={styles.offlineText}>WI-FI REQUIRED</Text>
+          <Text style={styles.errorText}>
+            Please connect to the same Wi-Fi network as your device for local streaming.
+          </Text>
+        </View>
+      );
+    }
+    // Show loading indicator while connecting
     if (streamStatus === 'connecting') {
       return (
         <View style={styles.centered}>
@@ -172,16 +221,23 @@ export default function DeviceDetailScreen() {
         </View>
       );
     }
-
+    // Show stream if online
     if (streamStatus === 'online' && streamUrl) {
       return <WebView source={{ uri: streamUrl }} style={styles.webview} />;
     }
-
-    // Show retry button if failed or errors
+    // Show retry button and error if offline/error
     return (
       <View style={styles.offline}>
         <Text style={styles.offlineText}>STREAM OFFLINE</Text>
         {lastError && <Text style={styles.errorText}>{lastError}</Text>}
+        
+        {/* --- THIS IS THE FIX --- */}
+        {/* Display the URL for easier debugging */}
+        {currentMode === 'local' && streamUrl && (
+          <Text style={styles.debugText}>Trying to connect to: {streamUrl}</Text>
+        )}
+        {/* --- END FIX --- */}
+        
         <TouchableOpacity style={styles.startButton} onPress={handleRetry}>
           <Text style={styles.buttonText}>Retry</Text>
         </TouchableOpacity>
@@ -189,6 +245,7 @@ export default function DeviceDetailScreen() {
     );
   };
 
+  // --- Show message if no deviceId provided ---
   if (!deviceId) {
     return (
       <SafeAreaView style={styles.container}>
@@ -197,60 +254,124 @@ export default function DeviceDetailScreen() {
     );
   }
 
-  const lastUpdateDate = readings.lastUpdate !== 'N/A' ? new Date(readings.lastUpdate).toLocaleString() : 'N/A';
+  // --- Format last update date ---
+  const lastUpdateDate =
+    readings.lastUpdate !== 'N/A'
+      ? new Date(readings.lastUpdate).toLocaleString()
+      : 'N/A';
 
+  // --- Main render ---
   return (
     <SafeAreaView style={styles.container}>
+      {/* Video/Stream Section */}
       <View style={styles.videoWrap}>{renderContent()}</View>
 
+      {/* Mode Selector */}
       <View style={styles.selectorContainer}>
         <TouchableOpacity
-          style={[styles.selectorButton, currentMode === 'local' && styles.selectorActive]}
-          onPress={() => handleModeSwitch('local')}>
-          <Text style={[styles.selectorText, currentMode === 'local' && styles.selectorTextActive]}>Local</Text>
+          style={[
+            styles.selectorButton,
+            currentMode === 'local' && styles.selectorActive,
+          ]}
+          onPress={() => handleModeSwitch('local')}
+        >
+          <Text
+            style={[
+              styles.selectorText,
+              currentMode === 'local' && styles.selectorTextActive,
+            ]}
+          >
+            Local
+          </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.selectorButton, currentMode === 'relay' && styles.selectorActive]}
-          onPress={() => handleModeSwitch('relay')}>
-          <Text style={[styles.selectorText, currentMode === 'relay' && styles.selectorTextActive]}>Relay</Text>
+          style={[
+            styles.selectorButton,
+            currentMode === 'relay' && styles.selectorActive,
+          ]}
+          onPress={() => handleModeSwitch('relay')}
+        >
+          <Text
+            style={[
+              styles.selectorText,
+              currentMode === 'relay' && styles.selectorTextActive,
+            ]}
+          >
+            Relay
+          </Text>
         </TouchableOpacity>
       </View>
-      
+
+      {/* Sensor Readings Card */}
       <View style={styles.card}>
+        {/* Temperature */}
         <View style={styles.row}>
-            <Text style={styles.stat}>🌡️ Temperature:</Text>
-            <Text style={[styles.value, readings.temperature as number > 45 && styles.alert]}>
-                {readings.temperature}°C
-            </Text>
+          <Text style={styles.stat}>🌡️ Temperature:</Text>
+          <Text
+            style={[
+              styles.value,
+              readings.temperature as number > 45 && styles.alert,
+            ]}
+          >
+            {readings.temperature}°C
+          </Text>
         </View>
+        {/* Gas Level */}
         <View style={styles.row}>
-            <Text style={styles.stat}>💨 Gas Level:</Text>
-            <Text style={[styles.value, readings.gasValue as number > 1000 && styles.alert]}>
-                {readings.gasValue}
-            </Text>
+          <Text style={styles.stat}>💨 Gas Level:</Text>
+          <Text
+            style={[
+              styles.value,
+              readings.gasValue as number > 1000 && styles.alert,
+            ]}
+          >
+            {readings.gasValue}
+          </Text>
         </View>
+        {/* Flame Detection */}
         <View style={styles.row}>
-            <Text style={styles.stat}>🔥 Flame Detected:</Text>
-            <Text style={[styles.value, readings.isFlameDetected && styles.alert]}>
-                {readings.isFlameDetected ? 'YES' : 'No'}
-            </Text>
+          <Text style={styles.stat}>🔥 Flame Detected:</Text>
+          <Text style={[styles.value, readings.isFlameDetected && styles.alert]}>
+            {readings.isFlameDetected ? 'YES' : 'No'}
+          </Text>
         </View>
-         <View style={[styles.row, { borderTopWidth: 1, borderTopColor: '#E5E7EB', paddingTop: 8, marginTop: 4 }]}>
-            <Text style={styles.stat}>🚨 Critical Alert:</Text>
-            <Text style={[styles.value, readings.isCriticalAlert && styles.alert]}>
-                {readings.isCriticalAlert ? 'ACTIVE' : 'Inactive'}
-            </Text>
+        {/* Critical Alert */}
+        <View
+          style={[
+            styles.row,
+            {
+              borderTopWidth: 1,
+              borderTopColor: '#E5E7EB',
+              paddingTop: 8,
+              marginTop: 4,
+            },
+          ]}
+        >
+          <Text style={styles.stat}>🚨 Critical Alert:</Text>
+          <Text style={[styles.value, readings.isCriticalAlert && styles.alert]}>
+            {readings.isCriticalAlert ? 'ACTIVE' : 'Inactive'}
+          </Text>
         </View>
+        {/* Last Update */}
         <Text style={styles.lastUpdate}>Last update: {lastUpdateDate}</Text>
       </View>
     </SafeAreaView>
   );
 }
 
+// --- Layout constants ---
 const { width } = Dimensions.get('window');
 const VIDEO_HEIGHT = Math.round((width - 32) * (3 / 4));
 
+// --- Styles ---
 const styles = StyleSheet.create({
+  debugText: {
+    marginTop: 15,
+    color: '#9CA3AF',
+    fontSize: 12,
+    textAlign: 'center',
+    paddingHorizontal: 20,
+},
   container: {
     flex: 1,
     padding: 16,
