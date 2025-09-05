@@ -100,7 +100,6 @@ export default function DeviceDetailScreen() {
     };
   }, [deviceId]);
 
-  // **FIXED**: This function now takes the URL to check as a parameter
   const checkStreamStatus = async (urlToCheck: string) => {
     if (!mountedRef.current || !urlToCheck) return;
     setStreamStatus('connecting');
@@ -125,12 +124,10 @@ export default function DeviceDetailScreen() {
     }
   };
 
-  // **FIXED**: This function now uses the dynamic deviceId
   const handleStartStream = async () => {
     if (!deviceId) return;
     try {
       await requestStream(deviceId, true);
-      // After requesting, our listeners will automatically pick up the new URL and status.
     } catch (error) {
       setLastError('Failed to send start request.');
     }
@@ -188,7 +185,6 @@ export default function DeviceDetailScreen() {
         </TouchableOpacity>
       </View>
       
-      {/* **ADDED**: Sensor Status Display Card */}
       <View style={styles.card}>
         <View style={styles.row}>
             <Text style={styles.stat}>🌡️ Temperature:</Text>
@@ -305,7 +301,7 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     fontWeight: '700',
-    color: '#1F2937',
+    color: '#FFFFFF',
   },
   startButton: {
     marginTop: 20,

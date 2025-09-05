@@ -103,22 +103,23 @@ export const claimDevice = async (deviceId: string, userId: string) => {
     throw new Error("Device ID and User ID are required to claim a device.");
   }
 
-  console.log(`Attempting to claim device ${deviceId} for user ${userId}...`);
-
   const updates: { [key: string]: any } = {};
 
-  // Path to the new, secure device record. We set the owner and some initial defaults.
+  // This sets the owner on the device itself
   updates[`/devices/${deviceId}/ownerUID`] = userId;
-  updates[`/devices/${deviceId}/controls/streamMode`] = "relay";
-  updates[`/devices/${deviceId}/controls/isStreamingRequested`] = false;
+  updates[`/devices/${deviceId}/controls/streamMode`] = "relay"; // default mode
+  
+  // *** THIS IS THE MISSING LINE ***
+  // This adds a reference to the device under the user's data,
+  // which is needed to show the list of their devices.
+  updates[`/users/${userId}/devices/${deviceId}`] = true;
 
-  // Path to the public unclaimed record. Setting it to null deletes it.
+  // This deletes the public unclaimed record
   updates[`/unclaimed_devices/${deviceId}`] = null;
 
   try {
-    // This update runs as a single, atomic transaction.
     await update(ref(db), updates);
-    console.log("Device claimed successfully!");
+    console.log("Device claimed successfully and linked to user!");
   } catch (error) {
     console.error("Failed to claim device:", error);
     throw error;
