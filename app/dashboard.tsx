@@ -11,6 +11,7 @@ function HomeScreen() {
   return <HomePage />;
 }
 
+// This screen now shows the list of devices
 function DevicesScreen() {
   return <CameraPage />;
 }
@@ -24,24 +25,21 @@ const Tab = createBottomTabNavigator();
 export default function Dashboard() {
   return (
     <>
-      {/* <Navbar /> */}
       <Tab.Navigator
         screenOptions={({ route }) => ({
-          headerShown: false,
+          headerShown: true,
           tabBarIcon: ({ focused, color, size }) => {
-            let iconName: keyof typeof Ionicons.glyphMap = "help"; // More specific type for icons
+            let iconName: keyof typeof Ionicons.glyphMap = "help";
 
             if (route.name === "Home") {
               iconName = focused ? "home" : "home-outline";
-            } else if (route.name === "Devices") {
+            } else if (route.name === "Devices") { // Changed from "Camera"
               iconName = focused ? "camera" : "camera-outline";
             } else if (route.name === "Me") {
               iconName = focused ? "person" : "person-outline";
             }
 
-            return (
-              <Ionicons name={iconName} size={size} color={color} />
-            );
+            return <Ionicons name={iconName} size={size} color={color} />;
           },
         })}
       >
@@ -51,8 +49,18 @@ export default function Dashboard() {
           options={{
             headerTitle: "My Devices",
             headerShown: true,
+            // The button has been removed from here
+          }}
+        />
+        <Tab.Screen
+          name="Devices" // This was formerly the "Camera" screen
+          component={DevicesScreen}
+          options={{
+            headerTitle: "Devices", // Changed header title for add-device page
+            headerShown: true,
+            // --- THIS IS THE FIX ---
+            // The "Add Device" button is now here
             headerRight: () => (
-              // FIX: Cast the href to suppress the typed-route error until the server is restarted.
               <Link href={"/add-device" as any} asChild>
                 <Pressable style={{ marginRight: 15 }}>
                   <Ionicons name="add-circle" size={32} color="#ef4444" />
@@ -60,11 +68,6 @@ export default function Dashboard() {
               </Link>
             ),
           }}
-        />
-        <Tab.Screen
-          name="Devices"
-          component={DevicesScreen}
-          options={{ headerTitle: "Live Stream", headerShown: true }}
         />
         <Tab.Screen
           name="Me"
@@ -75,4 +78,3 @@ export default function Dashboard() {
     </>
   );
 }
-
