@@ -29,8 +29,8 @@
       "manifest": {
         "networkSecurityConfig": "@xml/network_security_config"
       },
-      "permissions": [],
-      "usesCleartextTraffic": true ,
+      "permissions": ["android.permission.INTERNET"],
+      "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": true,
       "package": "com.apollofireapp",
       "googleServicesFile": "./google-services.json"

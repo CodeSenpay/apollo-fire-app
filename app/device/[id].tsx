@@ -36,6 +36,7 @@ export default function DeviceDetailScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [currentMode, setCurrentMode] = useState<'local' | 'relay'>('relay');
+  const [debugInfo, setDebugInfo] = useState<string>('');
   const [readings, setReadings] = useState<Readings>({
     temperature: 'N/A',
     gasValue: 'N/A',
@@ -66,6 +67,7 @@ export default function DeviceDetailScreen() {
       setIsLoading(true);
       setStreamError(null);
       setStreamUrl(null);
+      setDebugInfo(`Attempting to get ${mode} stream URL...`);
 
       try {
         let finalUrl = '';
@@ -90,10 +92,16 @@ export default function DeviceDetailScreen() {
             throw new Error('Device has not published a local stream URL.');
           }
         }
-        if (mountedRef.current) setStreamUrl(finalUrl);
+
+        setDebugInfo(`Stream URL: ${finalUrl}`);
+
+        if (mountedRef.current) {
+          setStreamUrl(finalUrl);
+        }
       } catch (e: any) {
         if (mountedRef.current) {
           setStreamError(e.message);
+          setDebugInfo(`Error: ${e.message}`);
           setIsLoading(false);
         }
       }
@@ -104,6 +112,7 @@ export default function DeviceDetailScreen() {
   // --- Subscribe to device data and controls ---
   useEffect(() => {
     if (!deviceId) return;
+
     mountedRef.current = true;
     requestStream(deviceId, true);
 
@@ -115,15 +124,15 @@ export default function DeviceDetailScreen() {
     });
 
     const unsubscribeReadings = subscribeToDevice(deviceId, (data) => {
-        if (!mountedRef.current || !data) return;
-        setReadings({
-          temperature: typeof data.temperature === 'number' ? data.temperature : 'N/A',
-          gasValue: typeof data.gasValue === 'number' ? data.gasValue : 'N/A',
-          isFlameDetected: !!data.isFlameDetected,
-          isCriticalAlert: !!data.isCriticalAlert,
-          lastUpdate: typeof data.lastUpdate === 'number' ? data.lastUpdate : 'N/A',
-        });
+      if (!mountedRef.current || !data) return;
+      setReadings({
+        temperature: typeof data.temperature === 'number' ? data.temperature : 'N/A',
+        gasValue: typeof data.gasValue === 'number' ? data.gasValue : 'N/A',
+        isFlameDetected: !!data.isFlameDetected,
+        isCriticalAlert: !!data.isCriticalAlert,
+        lastUpdate: typeof data.lastUpdate === 'number' ? data.lastUpdate : 'N/A',
       });
+    });
 
     return () => {
       mountedRef.current = false;
@@ -141,7 +150,23 @@ export default function DeviceDetailScreen() {
   const handleModeSwitch = (mode: 'local' | 'relay') => {
     if (deviceId) setStreamMode(deviceId, mode);
   };
-  
+
+  // --- Handle WebView messages ---
+  const handleWebViewMessage = (event: any) => {
+    const message = event.nativeEvent.data;
+    console.log('WebView message:', message);
+
+    if (message.startsWith('DEBUG:')) {
+      setDebugInfo(message.replace('DEBUG:', ''));
+    } else if (message === 'STREAM_LOADED') {
+      setIsLoading(false);
+      setStreamError(null);
+    } else if (message.startsWith('STREAM_ERROR:')) {
+      setStreamError(message.replace('STREAM_ERROR:', ''));
+      setIsLoading(false);
+    }
+  };
+
   // --- Render Functions ---
   const renderContent = () => {
     // State 1: An error has occurred.
@@ -150,6 +175,7 @@ export default function DeviceDetailScreen() {
         <View style={styles.offline}>
           <Text style={styles.offlineText}>STREAM OFFLINE</Text>
           <Text style={styles.errorText}>{streamError}</Text>
+          <Text style={styles.debugText}>{debugInfo}</Text>
           <TouchableOpacity style={styles.startButton} onPress={() => getStreamUrl(currentMode)}>
             <Text style={styles.buttonText}>Retry</Text>
           </TouchableOpacity>
@@ -163,44 +189,150 @@ export default function DeviceDetailScreen() {
         <View style={styles.centered}>
           <ActivityIndicator size="large" />
           <Text style={styles.loadingText}>Getting Stream URL...</Text>
+          <Text style={styles.debugText}>{debugInfo}</Text>
         </View>
       );
     }
 
-    // State 3: We have a URL, render the WebView and overlay the loader if needed.
+    // State 3: We have a URL, render the WebView with enhanced MJPEG handling
     return (
       <>
         <WebView
-  source={{
-    html: `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <style>
-            body, html, img { margin: 0; padding: 0; width: 100%; height: 100%; object-fit: contain; background-color: black; }
-          </style>
-        </head>
-        <body>
-          <img src="${streamUrl}" />
-        </body>
-      </html>
-    `,
-    // --- THIS IS THE FIX ---
-    baseUrl: '',
-    // --- END FIX ---
-  }}
-  style={styles.webview}
-  onLoad={() => setIsLoading(false)}
-  onError={(event) => {
-    setStreamError(`Failed to load stream: ${event.nativeEvent.description}`);
-    setIsLoading(false);
-  }}
-/>
+          // Update just the WebView HTML content in your existing code
+          source={{
+            html: `
+              <!DOCTYPE html>
+              <html>
+                <head>
+                  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+                  <style>
+                    body, html { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; background-color: #000; }
+                    .stream {
+                      position: absolute;
+                      top: 0;
+                      left: 0;
+                      width: 100%;
+                      height: 100%;
+                      object-fit: contain;
+                    }
+                    /* Hide the back buffer */
+                    .back {
+                      visibility: hidden;
+                    }
+                  </style>
+                </head>
+                <body>
+                  <img id="stream1" class="stream" />
+                  <img id="stream2" class="stream back" />
+          
+                  <script>
+                    const buffers = [
+                      document.getElementById('stream1'),
+                      document.getElementById('stream2')
+                    ];
+                    let currentBuffer = 0;
+          
+                    function uint8ArrayToBase64(bytes) {
+                      let binary = '';
+                      const len = bytes.byteLength;
+                      for (let i = 0; i < len; i++) {
+                        binary += String.fromCharCode(bytes[i]);
+                      }
+                      return window.btoa(binary);
+                    }
+          
+                    const SOI = new Uint8Array([0xFF, 0xD8]);
+                    const EOI = new Uint8Array([0xFF, 0xD9]);
+          
+                    fetch("${streamUrl}")
+                      .then(response => response.body.getReader())
+                      .then(reader => {
+                        let buffer = new Uint8Array();
+                        let frameCount = 0;
+          
+                        function findBytes(arr, search, startIndex = 0) {
+                          for (let i = startIndex; i <= arr.length - search.length; i++) {
+                            let found = true;
+                            for (let j = 0; j < search.length; j++) {
+                              if (arr[i+j] !== search[j]) { found = false; break; }
+                            }
+                            if (found) return i;
+                          }
+                          return -1;
+                        }
+          
+                        function process() {
+                          reader.read().then(({ done, value }) => {
+                            if (done) return;
+          
+                            let newBuffer = new Uint8Array(buffer.length + value.length);
+                            newBuffer.set(buffer);
+                            newBuffer.set(value, buffer.length);
+                            buffer = newBuffer;
+          
+                            let soiIndex = findBytes(buffer, SOI);
+                            while (soiIndex !== -1) {
+                              let eoiIndex = findBytes(buffer, EOI, soiIndex);
+                              if (eoiIndex !== -1) {
+                                const jpegData = buffer.slice(soiIndex, eoiIndex + EOI.length);
+                                
+                                const visible = buffers[currentBuffer];
+                                const hidden = buffers[1 - currentBuffer];
+          
+                                hidden.onload = () => {
+                                  // When the hidden image loads, swap visibility
+                                  visible.classList.add('back');
+                                  hidden.classList.remove('back');
+                                  currentBuffer = 1 - currentBuffer; // Switch buffers
+                                };
+                                
+                                const base64 = uint8ArrayToBase64(jpegData);
+                                hidden.src = 'data:image/jpeg;base64,' + base64;
+                                
+                                frameCount++;
+                                if (frameCount === 1) {
+                                  window.ReactNativeWebView.postMessage('STREAM_LOADED');
+                                }
+                                
+                                buffer = buffer.slice(eoiIndex + EOI.length);
+                                soiIndex = findBytes(buffer, SOI);
+                              } else {
+                                break;
+                              }
+                            }
+                            
+                            process();
+                          });
+                        }
+                        process();
+                      });
+                  </script>
+                </body>
+              </html>
+            `,
+          }}
+          style={styles.webview}
+          onMessage={handleWebViewMessage}
+          onError={(event) => {
+            setStreamError(`WebView error: ${event.nativeEvent.description}`);
+            setIsLoading(false);
+          }}
+          onLoadEnd={() => {
+            console.log('WebView loaded');
+          }}
+          allowsInlineMediaPlayback={true}
+          mediaPlaybackRequiresUserAction={false}
+          javaScriptEnabled={true}
+          domStorageEnabled={true}
+          startInLoadingState={false}
+          mixedContentMode="compatibility"
+        />
         {/* The loader is rendered ON TOP of the WebView */}
         {isLoading && (
           <View style={[StyleSheet.absoluteFill, styles.centered, { backgroundColor: 'rgba(0,0,0,0.8)' }]}>
             <ActivityIndicator size="large" color="#ffffff" />
             <Text style={[styles.loadingText, { color: '#ffffff' }]}>Connecting to Stream...</Text>
+            <Text style={[styles.debugText, { color: '#ffffff' }]}>{debugInfo}</Text>
           </View>
         )}
       </>
@@ -208,7 +340,7 @@ export default function DeviceDetailScreen() {
   };
 
   if (!deviceId) return <SafeAreaView style={styles.container}><Text>No Device ID.</Text></SafeAreaView>;
-  
+
   const lastUpdateDate = readings.lastUpdate !== 'N/A' ? new Date(readings.lastUpdate).toLocaleString() : 'N/A';
 
   return (
@@ -231,16 +363,15 @@ export default function DeviceDetailScreen() {
       </View>
 
       <View style={styles.card}>
-        {/* Sensor readings... */}
         <View style={styles.row}>
           <Text style={styles.stat}>🌡️ Temperature:</Text>
-          <Text style={[styles.value, (readings.temperature as number) > 45 && styles.alert]}>
+          <Text style={[styles.value, typeof readings.temperature === 'number' && readings.temperature > 45 && styles.alert]}>
             {readings.temperature}°C
           </Text>
         </View>
         <View style={styles.row}>
           <Text style={styles.stat}>💨 Gas Level:</Text>
-          <Text style={[styles.value, (readings.gasValue as number) > 1000 && styles.alert]}>
+          <Text style={[styles.value, typeof readings.gasValue === 'number' && readings.gasValue > 1000 && styles.alert]}>
             {readings.gasValue}
           </Text>
         </View>
@@ -280,6 +411,7 @@ const styles = StyleSheet.create({
   webview: { width: '100%', height: '100%', backgroundColor: '#000' },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   loadingText: { marginTop: 8, color: '#9CA3AF' },
+  debugText: { marginTop: 8, color: '#6B7280', fontSize: 12, textAlign: 'center', paddingHorizontal: 20 },
   offline: { flex: 1, width: '100%', backgroundColor: '#111827', justifyContent: 'center', alignItems: 'center', padding: 10 },
   offlineText: { color: '#F9FAFB', fontWeight: '700', fontSize: 18 },
   errorText: { marginTop: 8, color: '#F87171', textAlign: 'center', paddingHorizontal: 20 },
