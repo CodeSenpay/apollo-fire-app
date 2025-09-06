@@ -1,6 +1,7 @@
 import { db, requestStream, setStreamMode, subscribeToDevice } from '@/src/services/firebaseConfig';
+import Ionicons from '@expo/vector-icons/build/Ionicons';
 import * as Network from 'expo-network';
-import { useLocalSearchParams, useNavigation } from 'expo-router';
+import { Link, useLocalSearchParams, useNavigation } from 'expo-router';
 import { get, onValue, ref } from 'firebase/database';
 import React, {
   useCallback,
@@ -12,6 +13,7 @@ import React, {
 import {
   ActivityIndicator,
   Dimensions,
+  Pressable,
   SafeAreaView,
   StyleSheet,
   Text,
@@ -53,7 +55,15 @@ export default function DeviceDetailScreen() {
 
   // --- Set navigation title ---
   useLayoutEffect(() => {
-    navigation.setOptions({ title: `Device: ${deviceId?.slice(0, 12)}...` });
+    navigation.setOptions({
+      title: `Device: ${deviceId?.slice(0, 12)}...`, headerRight: () => (
+        <Link href={{ pathname: "/device/settings", params: { id: deviceId } }} asChild>
+          <Pressable style={{ marginRight: 15 }}>
+            <Ionicons name="settings-outline" size={24} color="#1F2937" />
+          </Pressable>
+        </Link>
+      ),
+    });
   }, [navigation, deviceId]);
 
   // --- Check Wi-Fi connection ---
@@ -230,14 +240,14 @@ export default function DeviceDetailScreen() {
       <View style={styles.offline}>
         <Text style={styles.offlineText}>STREAM OFFLINE</Text>
         {lastError && <Text style={styles.errorText}>{lastError}</Text>}
-        
+
         {/* --- THIS IS THE FIX --- */}
         {/* Display the URL for easier debugging */}
         {currentMode === 'local' && streamUrl && (
           <Text style={styles.debugText}>Trying to connect to: {streamUrl}</Text>
         )}
         {/* --- END FIX --- */}
-        
+
         <TouchableOpacity style={styles.startButton} onPress={handleRetry}>
           <Text style={styles.buttonText}>Retry</Text>
         </TouchableOpacity>
@@ -371,7 +381,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: 'center',
     paddingHorizontal: 20,
-},
+  },
   container: {
     flex: 1,
     padding: 16,

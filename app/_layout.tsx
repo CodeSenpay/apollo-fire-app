@@ -73,7 +73,7 @@ async function getPushNotificationToken(): Promise<string | null> {
 
   // Use your Expo project ID
   return (await Notifications.getExpoPushTokenAsync({
-      projectId: process.env.EXPO_PUBLIC_EAS_PROJECT_ID,
+    projectId: process.env.EXPO_PUBLIC_EAS_PROJECT_ID,
   })).data;
 }
 
@@ -194,6 +194,14 @@ export default function RootLayout() {
         <Stack.Screen
           name="dashboard"
           options={{ headerShown: false, statusBarHidden: true }}
+        />
+        <Stack.Screen
+          name="device/settings"
+          options={{
+            headerShown: true,
+            headerTitle: "Device Settings",
+            presentation: 'modal'
+          }}
         />
         <Stack.Screen name="profile" options={{ headerShown: false }} />
         <Stack.Screen name="addsecurity" options={{ headerShown: false }} />
