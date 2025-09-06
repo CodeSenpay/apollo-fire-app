@@ -16,36 +16,16 @@ import {
   View,
 } from 'react-native';
 
-// replace your arrayBufferToBase64 with this implementation
-function base64ArrayBuffer(arrayBuffer: ArrayBuffer) {
-  const bytes = new Uint8Array(arrayBuffer);
-  const len = bytes.length;
-  const lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  let base64 = '';
-  let i;
-
-  for (i = 0; i < len - 2; i += 3) {
-    base64 += lookup[bytes[i] >> 2];
-    base64 += lookup[((bytes[i] & 3) << 4) | (bytes[i + 1] >> 4)];
-    base64 += lookup[((bytes[i + 1] & 15) << 2) | (bytes[i + 2] >> 6)];
-    base64 += lookup[bytes[i + 2] & 63];
+// Helper function to convert raw binary data to a base64 string
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
   }
-
-  if (i < len) {
-    base64 += lookup[bytes[i] >> 2];
-    if (i === len - 1) {
-      base64 += lookup[(bytes[i] & 3) << 4];
-      base64 += '==';
-    } else {
-      base64 += lookup[((bytes[i] & 3) << 4) | (bytes[i + 1] >> 4)];
-      base64 += lookup[(bytes[i + 1] & 15) << 2];
-      base64 += '=';
-    }
-  }
-
-  return base64;
+  return btoa(binary);
 }
-
 
 // --- Types ---
 type Readings = {
@@ -57,20 +37,23 @@ type Readings = {
 };
 
 // --- Main Component ---
+// Replace the existing DeviceDetailScreen component with this version
 export default function DeviceDetailScreen() {
   const { id: deviceId } = useLocalSearchParams<{ id: string }>();
   const navigation = useNavigation();
   const ws = useRef<WebSocket | null>(null);
+  const loadTarget = useRef<'A' | 'B'>('B');
 
-  // Ref to hold the latest frame without causing re-renders on every message
-  const latestFrame = useRef<string | null>(null);
+  // double buffer state for rendering
+  const [frameA, setFrameA] = useState<string | null>(null);
+  const [frameB, setFrameB] = useState<string | null>(null);
+  const [activeFrame, setActiveFrame] = useState<'A' | 'B'>('A');
 
-  // State
+  // other state
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [currentMode, setCurrentMode] = useState<'local' | 'relay'>('relay');
-  const [frameSource, setFrameSource] = useState<string | null>(null);
   const [readings, setReadings] = useState<Readings>({
     temperature: 'N/A', gasValue: 'N/A', isFlameDetected: false, isCriticalAlert: false, lastUpdate: 'N/A',
   });
@@ -88,35 +71,24 @@ export default function DeviceDetailScreen() {
     });
   }, [navigation, deviceId]);
 
-  const getStreamUrl = useCallback(
-    async (mode: 'local' | 'relay') => {
-      if (!deviceId) return;
-      setIsLoading(true);
-      setStreamError(null);
-      setStreamUrl(null);
-
-      try {
-        if (mode === 'relay') throw new Error('Relay streaming is not supported.');
-
-        const networkState = await Network.getNetworkStateAsync();
-        if (networkState.type !== Network.NetworkStateType.WIFI) {
-          throw new Error('Must be on Wi-Fi for local streaming.');
-        }
-
-        const urlRef = ref(db, `devices/${deviceId}/controls/streamUrl`);
-        const snapshot = await get(urlRef);
-        if (snapshot.exists() && snapshot.val()) {
-          setStreamUrl(snapshot.val());
-        } else {
-          throw new Error('Device has not published a local stream URL.');
-        }
-      } catch (e: any) {
-        setStreamError(e.message);
-        setIsLoading(false);
-      }
-    },
-    [deviceId]
-  );
+  const getStreamUrl = useCallback(async (mode: 'local' | 'relay') => {
+    if (!deviceId) return;
+    setIsLoading(true);
+    setStreamError(null);
+    setStreamUrl(null);
+    try {
+      if (mode === 'relay') throw new Error('Relay streaming is not supported.');
+      const networkState = await Network.getNetworkStateAsync();
+      if (networkState.type !== Network.NetworkStateType.WIFI) throw new Error('Must be on Wi-Fi for local streaming.');
+      const urlRef = ref(db, `devices/${deviceId}/controls/streamUrl`);
+      const snapshot = await get(urlRef);
+      if (snapshot.exists() && snapshot.val()) setStreamUrl(snapshot.val());
+      else throw new Error('Device has not published a local stream URL.');
+    } catch (e: any) {
+      setStreamError(e.message);
+      setIsLoading(false);
+    }
+  }, [deviceId]);
 
   useEffect(() => {
     if (!deviceId) return;
@@ -147,104 +119,153 @@ export default function DeviceDetailScreen() {
     getStreamUrl(currentMode);
   }, [currentMode, getStreamUrl]);
 
-  // WebSocket Connection Handler
+  // --- New: frame timing and buffer refs ---
+  const FRAME_RATE = 15;
+  const FRAME_INTERVAL = Math.round(1000 / FRAME_RATE); // ~66 ms
+
+  const bufferARef = useRef<string | null>(null);
+  const bufferBRef = useRef<string | null>(null);
+  const loadedARef = useRef(false);
+  const loadedBRef = useRef(false);
+  const lastSwapRef = useRef<number>(0);
+  const scheduledSwapRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // helper that will attempt a swap only if the buffer is loaded and the interval passed
+  function scheduleSwapIfReady(buffer: 'A' | 'B') {
+    const loaded = buffer === 'A' ? loadedARef.current : loadedBRef.current;
+    if (!loaded) return;
+
+    const now = Date.now();
+    const since = now - (lastSwapRef.current || 0);
+
+    // if enough time passed do immediate swap
+    if (since >= FRAME_INTERVAL) {
+      lastSwapRef.current = now;
+      setActiveFrame(buffer);
+      // flip loadTarget for next incoming frame
+      loadTarget.current = buffer === 'A' ? 'B' : 'A';
+      if (scheduledSwapRef.current) {
+        clearTimeout(scheduledSwapRef.current);
+        scheduledSwapRef.current = null;
+      }
+      return;
+    }
+
+    // schedule a delayed swap to hit target frame interval
+    const delay = FRAME_INTERVAL - since;
+    if (scheduledSwapRef.current) {
+      clearTimeout(scheduledSwapRef.current);
+    }
+    scheduledSwapRef.current = setTimeout(() => {
+      // only perform swap if buffer still loaded and has not been overwritten
+      const stillLoaded = buffer === 'A' ? loadedARef.current : loadedBRef.current;
+      if (!stillLoaded) {
+        scheduledSwapRef.current = null;
+        return;
+      }
+      lastSwapRef.current = Date.now();
+      setActiveFrame(buffer);
+      loadTarget.current = buffer === 'A' ? 'B' : 'A';
+      scheduledSwapRef.current = null;
+    }, delay);
+  }
+
   useEffect(() => {
     if (currentMode !== 'local' || !streamUrl) {
       ws.current?.close();
       return;
     }
-
     const wsUrl = streamUrl.startsWith('ws://') ? streamUrl : streamUrl.replace('http://', 'ws://').replace('/stream', '/ws');
-
     ws.current = new WebSocket(wsUrl);
     ws.current.binaryType = 'arraybuffer';
 
-    ws.current.onopen = () => setIsLoading(false);
-    ws.current.onerror = (error) => setStreamError('WebSocket error. Check connection.');
-    ws.current.onclose = () => setFrameSource(null);
+    ws.current.onopen = () => {
+      setIsLoading(false);
+      // reset buffers on fresh open
+      bufferARef.current = null;
+      bufferBRef.current = null;
+      loadedARef.current = false;
+      loadedBRef.current = false;
+      setFrameA(null);
+      setFrameB(null);
+      lastSwapRef.current = 0;
+      if (scheduledSwapRef.current) {
+        clearTimeout(scheduledSwapRef.current);
+        scheduledSwapRef.current = null;
+      }
+    };
+
+    ws.current.onerror = () => setStreamError('WebSocket error. Check connection.');
+    ws.current.onclose = () => {
+      setFrameA(null);
+      setFrameB(null);
+      bufferARef.current = null;
+      bufferBRef.current = null;
+      loadedARef.current = false;
+      loadedBRef.current = false;
+    };
 
     ws.current.onmessage = (event) => {
-      try {
-        // if message already a data URI or base64 string
-        if (typeof event.data === 'string') {
-          const payload = event.data;
-          // if server sends full data URI
-          if (payload.startsWith('data:image')) {
-            latestFrame.current = payload;
-          } else {
-            // assume payload is base64
-            latestFrame.current = `data:image/jpeg;base64,${payload}`;
-          }
-          setIsLoading(false);
-          return;
-        }
-    
-        // ArrayBuffer case
-        if (event.data instanceof ArrayBuffer) {
-          const b64 = base64ArrayBuffer(event.data);
-          latestFrame.current = `data:image/jpeg;base64,${b64}`;
-          setIsLoading(false);
-          return;
-        }
-    
-        // Blob case (read it)
-        // FileReader is supported in Expo/React Native environments
-        if (event.data instanceof Blob) {
-          const reader = new FileReader();
-          reader.onload = () => {
-            const ab = reader.result as ArrayBuffer;
-            const b64 = base64ArrayBuffer(ab);
-            latestFrame.current = `data:image/jpeg;base64,${b64}`;
-            setIsLoading(false);
-          };
-          reader.readAsArrayBuffer(event.data);
-          return;
-        }
-    
-      } catch (err) {
-        console.warn('Frame decode error', err);
-        setStreamError('Frame decode error');
+      // convert binary to data uri
+      const base64Data = arrayBufferToBase64(event.data as ArrayBuffer);
+      const dataUri = `data:image/jpeg;base64,${base64Data}`;
+
+      // write to inactive buffer and mark it as not loaded yet
+      if (loadTarget.current === 'A') {
+        bufferARef.current = dataUri;
+        loadedARef.current = false;
+        setFrameA(dataUri);
+      } else {
+        bufferBRef.current = dataUri;
+        loadedBRef.current = false;
+        setFrameB(dataUri);
       }
     };
-    
 
-    return () => ws.current?.close();
+    return () => {
+      ws.current?.close();
+    };
   }, [streamUrl, currentMode]);
-
-  // Optimized Render Loop
-  useEffect(() => {
-    let frameId: number;
-    const renderLoop = () => {
-      if (latestFrame.current) {
-        setFrameSource(latestFrame.current);
-        latestFrame.current = null; // Mark the frame as rendered
-      }
-      frameId = requestAnimationFrame(renderLoop);
-    };
-
-    frameId = requestAnimationFrame(renderLoop);
-    return () => cancelAnimationFrame(frameId);
-  }, []);
-
 
   const handleModeSwitch = (mode: 'local' | 'relay') => {
     if (deviceId) setStreamMode(deviceId, mode);
   };
 
   const renderContent = () => {
-    if (currentMode !== 'local') {
-      return <View style={styles.offline}><Text style={styles.offlineText}>MODE: RELAY</Text></View>;
-    }
-    if (frameSource) {
-      return <Image source={{ uri: frameSource }} style={styles.videoImage} resizeMode="contain" />;
-    }    
-    if (isLoading) {
-      return <View style={styles.centered}><ActivityIndicator size="large" /><Text style={styles.loadingText}>Connecting...</Text></View>;
-    }
-    if (streamError) {
-      return <View style={styles.offline}><Text style={styles.offlineText}>STREAM OFFLINE</Text><Text style={styles.errorText}>{streamError}</Text></View>;
-    }
-    return <View style={styles.centered}><Text style={styles.loadingText}>Preparing local stream...</Text></View>;
+    if (currentMode !== 'local') return <View style={styles.offline}><Text style={styles.offlineText}>MODE: RELAY</Text></View>;
+    if (isLoading) return <View style={styles.centered}><ActivityIndicator size="large" /><Text style={styles.loadingText}>Connecting...</Text></View>;
+    if (streamError) return <View style={styles.offline}><Text style={styles.offlineText}>STREAM OFFLINE</Text><Text style={styles.errorText}>{streamError}</Text></View>;
+
+    return (
+      <>
+        <Image
+          source={frameA ? { uri: frameA } : undefined}
+          style={[StyleSheet.absoluteFill, { opacity: activeFrame === 'A' ? 1 : 0 }]}
+          fadeDuration={0} // remove built in fade to avoid visual flicker
+          onLoadEnd={() => {
+            // mark buffer A loaded
+            loadedARef.current = true;
+            // only schedule swap for A if this buffer is most recent
+            if (bufferARef.current && bufferARef.current === frameA) {
+              scheduleSwapIfReady('A');
+            }
+          }}
+          resizeMode="cover"
+        />
+        <Image
+          source={frameB ? { uri: frameB } : undefined}
+          style={[StyleSheet.absoluteFill, { opacity: activeFrame === 'B' ? 1 : 0 }]}
+          fadeDuration={0}
+          onLoadEnd={() => {
+            loadedBRef.current = true;
+            if (bufferBRef.current && bufferBRef.current === frameB) {
+              scheduleSwapIfReady('B');
+            }
+          }}
+          resizeMode="cover"
+        />
+      </>
+    );
   };
 
   if (!deviceId) return <SafeAreaView style={styles.container}><Text>No Device ID.</Text></SafeAreaView>;
@@ -254,12 +275,8 @@ export default function DeviceDetailScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.videoWrap}>{renderContent()}</View>
       <View style={styles.selectorContainer}>
-        <TouchableOpacity style={[styles.selectorButton, currentMode === 'local' && styles.selectorActive]} onPress={() => handleModeSwitch('local')}>
-          <Text style={[styles.selectorText, currentMode === 'local' && styles.selectorTextActive]}>Local</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.selectorButton, currentMode === 'relay' && styles.selectorActive]} onPress={() => handleModeSwitch('relay')}>
-          <Text style={[styles.selectorText, currentMode === 'relay' && styles.selectorTextActive]}>Relay</Text>
-        </TouchableOpacity>
+        <TouchableOpacity style={[styles.selectorButton, currentMode === 'local' && styles.selectorActive]} onPress={() => handleModeSwitch('local')}><Text style={[styles.selectorText, currentMode === 'local' && styles.selectorTextActive]}>Local</Text></TouchableOpacity>
+        <TouchableOpacity style={[styles.selectorButton, currentMode === 'relay' && styles.selectorActive]} onPress={() => handleModeSwitch('relay')}><Text style={[styles.selectorText, currentMode === 'relay' && styles.selectorTextActive]}>Relay</Text></TouchableOpacity>
       </View>
       <View style={styles.card}>
         <View style={styles.row}><Text style={styles.stat}>🌡️ Temperature:</Text><Text style={[styles.value, typeof readings.temperature === 'number' && readings.temperature > 45 && styles.alert]}>{readings.temperature}°C</Text></View>
@@ -272,19 +289,15 @@ export default function DeviceDetailScreen() {
   );
 }
 
+
 // --- Styles ---
 const { width } = Dimensions.get('window');
 const VIDEO_HEIGHT = Math.round((width - 32) * (3 / 4));
 
 const styles = StyleSheet.create({
-  // add to your StyleSheet
-videoImage: {
-  width: '100%',
-  height: '100%'
-},
   container: { flex: 1, padding: 16, backgroundColor: '#F3F4F6' },
-  videoWrap: { height: VIDEO_HEIGHT, backgroundColor: '#000', borderRadius: 12, overflow: 'hidden', marginBottom: 16, justifyContent: 'center', alignItems: 'center' },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  videoWrap: { height: VIDEO_HEIGHT, backgroundColor: '#000', borderRadius: 12, overflow: 'hidden', marginBottom: 16 },
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', height: '100%', width: '100%'},
   loadingText: { marginTop: 8, color: '#9CA3AF' },
   offline: { flex: 1, width: '100%', backgroundColor: '#111827', justifyContent: 'center', alignItems: 'center', padding: 20 },
   offlineText: { color: '#F9FAFB', fontWeight: '700', fontSize: 18, textAlign: 'center' },
