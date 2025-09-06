@@ -1,7 +1,5 @@
-
 import { db, requestStream, setStreamMode, subscribeToDevice } from '@/src/services/firebaseConfig';
 import Ionicons from '@expo/vector-icons/build/Ionicons';
-import { Video } from 'expo-av';
 import * as Network from 'expo-network';
 import { Link, useLocalSearchParams, useNavigation } from 'expo-router';
 import { get, onValue, ref } from 'firebase/database';
@@ -27,17 +25,14 @@ type Readings = {
   lastUpdate: number | 'N/A';
 };
 
-type StreamType = 'mjpeg' | 'hls' | 'unknown' | null;
-
-// --- Component ---
+// --- Main Component ---
 export default function DeviceDetailScreen() {
   const { id: deviceId } = useLocalSearchParams<{ id: string }>();
   const navigation = useNavigation();
   const mountedRef = useRef(true);
 
-  const [isWifiConnected, setIsWifiConnected] = useState(true);
+  // --- State ---
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
-  const [streamType, setStreamType] = useState<StreamType>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [currentMode, setCurrentMode] = useState<'local' | 'relay'>('relay');
@@ -49,14 +44,7 @@ export default function DeviceDetailScreen() {
     lastUpdate: 'N/A',
   });
 
-  // WebView tuning
-  const [reloadKey, setReloadKey] = useState(0);
-  const reloadCountRef = useRef(0);
-
-  // Increase retries and timeout
-  const MAX_RELOADS = 12;
-  const WEBVIEW_FIRST_FRAME_TIMEOUT = 20000; // 20 seconds
-
+  // --- Set navigation title ---
   useLayoutEffect(() => {
     navigation.setOptions({
       title: `Device: ${deviceId?.slice(0, 12)}...`,
@@ -70,48 +58,14 @@ export default function DeviceDetailScreen() {
     });
   }, [navigation, deviceId]);
 
-  const isLocalIp = (url: string) => {
-    try {
-      const u = new URL(url);
-      return /^(10\.|192\.168\.|127\.|172\.(1[6-9]|2[0-9]|3[0-1]))/.test(u.hostname);
-    } catch {
-      return false;
-    }
-  };
-
-  const probeStream = useCallback(async (url: string) => {
-    const controller = new AbortController();
-    const timeoutMs = 5000;
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const res = await fetch(url, {
-        method: 'GET',
-        headers: {
-          Accept: 'multipart/x-mixed-replace, image/*, */*',
-          'User-Agent': 'Mozilla/5.0 (Mobile) AppleWebKit/537.36',
-        },
-        signal: controller.signal,
-      });
-      const ct = res.headers.get('content-type') || '';
-      clearTimeout(timeoutId);
-      return ct.toLowerCase();
-    } catch (err) {
-      clearTimeout(timeoutId);
-      throw err;
-    }
-  }, []);
-
+  // --- Logic to get the stream URL ---
   const getStreamUrl = useCallback(
     async (mode: 'local' | 'relay') => {
       if (!deviceId) return;
-      if (mountedRef.current) {
-        setIsLoading(true);
-        setStreamError(null);
-        setStreamUrl(null);
-        setStreamType(null);
-        setReloadKey(k => k + 1);
-        reloadCountRef.current = 0;
-      }
+
+      setIsLoading(true);
+      setStreamError(null);
+      setStreamUrl(null);
 
       try {
         let finalUrl = '';
@@ -121,14 +75,12 @@ export default function DeviceDetailScreen() {
           if (snapshot.exists() && snapshot.val()) {
             finalUrl = `${snapshot.val()}/stream/view/${deviceId}`;
           } else {
-            throw new Error('Relay stream URL not configured in Firebase.');
+            throw new Error('Relay stream URL not configured.');
           }
         } else {
           const networkState = await Network.getNetworkStateAsync();
-          const wifiIsOn = networkState.type === Network.NetworkStateType.WIFI;
-          if (mountedRef.current) setIsWifiConnected(wifiIsOn);
-          if (!wifiIsOn) {
-            throw new Error('You must be on Wi-Fi for local streaming.');
+          if (networkState.type !== Network.NetworkStateType.WIFI) {
+            throw new Error('Must be on Wi-Fi for local streaming.');
           }
           const urlRef = ref(db, `devices/${deviceId}/controls/streamUrl`);
           const snapshot = await get(urlRef);
@@ -138,76 +90,40 @@ export default function DeviceDetailScreen() {
             throw new Error('Device has not published a local stream URL.');
           }
         }
-
-        console.log('finalStreamUrl', finalUrl);
         if (mountedRef.current) setStreamUrl(finalUrl);
-
-        // For local IPs prefer WebView fallback
-        if (isLocalIp(finalUrl)) {
-          if (mountedRef.current) setStreamType('unknown');
-          return;
-        }
-
-        // non-local: try lightweight probe
-        try {
-          const contentType = await probeStream(finalUrl);
-          console.log('probe content-type', contentType);
-          if (
-            contentType.includes('application/vnd.apple.mpegurl') ||
-            contentType.includes('application/x-mpegurl') ||
-            finalUrl.toLowerCase().includes('.m3u8')
-          ) {
-            if (mountedRef.current) setStreamType('hls');
-            return;
-          }
-          if (
-            contentType.includes('multipart/x-mixed-replace') ||
-            contentType.includes('image/jpeg') ||
-            contentType.includes('image')
-          ) {
-            if (mountedRef.current) setStreamType('mjpeg');
-            return;
-          }
-          if (mountedRef.current) setStreamType('unknown');
-        } catch (probeErr: any) {
-          console.log('probe error fallback', probeErr);
-          if (mountedRef.current) setStreamType('unknown');
-        }
       } catch (e: any) {
         if (mountedRef.current) {
-          setStreamError(e.message || 'Failed to get stream URL.');
+          setStreamError(e.message);
           setIsLoading(false);
         }
       }
     },
-    [deviceId, probeStream]
+    [deviceId]
   );
 
+  // --- Subscribe to device data and controls ---
   useEffect(() => {
     if (!deviceId) return;
     mountedRef.current = true;
+    requestStream(deviceId, true);
 
     const controlsRef = ref(db, `devices/${deviceId}/controls`);
     const unsubscribeControls = onValue(controlsRef, (snapshot) => {
-      const controls = snapshot.val();
-      if (mountedRef.current && controls) {
-        const newMode = controls.streamMode || 'relay';
-        setCurrentMode(newMode);
-      }
+      if (!mountedRef.current) return;
+      const newMode = snapshot.val()?.streamMode || 'relay';
+      setCurrentMode(newMode);
     });
 
     const unsubscribeReadings = subscribeToDevice(deviceId, (data) => {
-      if (!mountedRef.current || !data) return;
-      setReadings({
-        temperature: typeof data.temperature === 'number' ? data.temperature : 'N/A',
-        gasValue: typeof data.gasValue === 'number' ? data.gasValue : 'N/A',
-        isFlameDetected: !!data.isFlameDetected,
-        isCriticalAlert: !!data.isCriticalAlert,
-        lastUpdate: typeof data.lastUpdate === 'number' ? data.lastUpdate : 'N/A',
+        if (!mountedRef.current || !data) return;
+        setReadings({
+          temperature: typeof data.temperature === 'number' ? data.temperature : 'N/A',
+          gasValue: typeof data.gasValue === 'number' ? data.gasValue : 'N/A',
+          isFlameDetected: !!data.isFlameDetected,
+          isCriticalAlert: !!data.isCriticalAlert,
+          lastUpdate: typeof data.lastUpdate === 'number' ? data.lastUpdate : 'N/A',
+        });
       });
-    });
-
-    requestStream(deviceId, true);
 
     return () => {
       mountedRef.current = false;
@@ -217,236 +133,82 @@ export default function DeviceDetailScreen() {
     };
   }, [deviceId]);
 
+  // --- Re-fetch URL when mode changes ---
   useEffect(() => {
     getStreamUrl(currentMode);
   }, [currentMode, getStreamUrl]);
 
-  useEffect(() => {
-    if (streamUrl && !streamType) setIsLoading(true);
-  }, [streamUrl, streamType]);
-
-  // Improved MJPEG HTML
-  const mjpegHtml = (uri: string) => `
-    <!doctype html>
-    <html>
-      <head>
-        <meta name="viewport" content="initial-scale=1.0, maximum-scale=1.0" />
-        <style>
-          html,body { margin:0; padding:0; height:100%; background:black; }
-          img { width:100%; height:100%; object-fit:contain; display:block; }
-        </style>
-      </head>
-      <body>
-        <img id="cam" />
-        <script>
-          (function() {
-            const uri = '${uri}';
-            let img = document.getElementById('cam');
-            let firstFrame = false;
-            let retryCount = 0;
-            const MAX_RETRY = 50;
-            const RETRY_DELAY = 800;
-
-            function setSrcWithCacheBuster() {
-              img.src = uri + '?r=' + Date.now();
-            }
-
-            function start() {
-              img.onload = function() {
-                if (firstFrame) return;
-                firstFrame = true;
-                // try to ensure decode finished
-                if (img.decode) {
-                  img.decode().then(() => {
-                    window.ReactNativeWebView.postMessage('loaded');
-                  }).catch(() => {
-                    window.ReactNativeWebView.postMessage('loaded');
-                  });
-                } else {
-                  window.ReactNativeWebView.postMessage('loaded');
-                }
-              };
-
-              img.onerror = function() {
-                retryCount++;
-                if (retryCount <= MAX_RETRY) {
-                  setTimeout(setSrcWithCacheBuster, RETRY_DELAY);
-                } else {
-                  window.ReactNativeWebView.postMessage('error');
-                }
-              };
-
-              // periodic refresh if no first frame
-              const t = setInterval(function() {
-                if (!firstFrame && retryCount <= MAX_RETRY) {
-                  setSrcWithCacheBuster();
-                } else {
-                  clearInterval(t);
-                }
-              }, 3000);
-
-              // initial load
-              setSrcWithCacheBuster();
-            }
-
-            // start after short delay to allow WebView to fully initialize
-            setTimeout(start, 200);
-          })();
-        </script>
-      </body>
-    </html>
-  `;
-
-  // WebView message handler
-  const handleWebViewMessage = (event: any) => {
-    const msg = event.nativeEvent.data;
-    if (msg === 'loaded') {
-      if (mountedRef.current) {
-        setIsLoading(false);
-        setStreamError(null);
-        reloadCountRef.current = 0;
-      }
-    }
-    if (msg === 'error') {
-      if (!mountedRef.current) return;
-      reloadCountRef.current += 1;
-      if (reloadCountRef.current <= MAX_RELOADS) {
-        setIsLoading(true);
-        setReloadKey(k => k + 1);
-      } else {
-        setStreamError('Failed to load stream after multiple attempts');
-        setIsLoading(false);
-      }
-    }
+  const handleModeSwitch = (mode: 'local' | 'relay') => {
+    if (deviceId) setStreamMode(deviceId, mode);
   };
-
-  const handleWebViewError = (e: any) => {
-    console.log('WebView error', e.nativeEvent);
-    if (!mountedRef.current) return;
-    reloadCountRef.current += 1;
-    if (reloadCountRef.current <= MAX_RELOADS) {
-      setIsLoading(true);
-      setReloadKey(k => k + 1);
-      return;
-    }
-    setStreamError('WebView failed repeatedly');
-    setIsLoading(false);
-  };
-
-  // Fallback timer that forces a reload if first-frame does not arrive
-  useEffect(() => {
-    if (streamType !== 'mjpeg' && streamType !== 'unknown') return;
-    if (!streamUrl) return;
-    if (!isLoading) return;
-    const t = setTimeout(() => {
-      if (!mountedRef.current) return;
-      reloadCountRef.current += 1;
-      if (reloadCountRef.current <= MAX_RELOADS) {
-        setReloadKey(k => k + 1);
-      } else {
-        setStreamError('Stream did not start within timeout');
-        setIsLoading(false);
-      }
-    }, WEBVIEW_FIRST_FRAME_TIMEOUT);
-    return () => clearTimeout(t);
-  }, [streamType, streamUrl, isLoading, reloadKey]);
-
-  const renderMJPEG = (uri: string) => {
-    return (
-      <WebView
-        key={`mjpeg-${reloadKey}`}
-        originWhitelist={['*']}
-        source={{ html: mjpegHtml(uri) }}
-        style={styles.webview}
-        onMessage={handleWebViewMessage}
-        onError={handleWebViewError}
-        onLoadEnd={() => {
-          // keep loader until 'loaded' arrives
-        }}
-        allowsInlineMediaPlayback
-        javaScriptEnabled
-        domStorageEnabled
-        mixedContentMode="always"
-        cacheEnabled={false}
-        thirdPartyCookiesEnabled={true}
-        sharedCookiesEnabled={true}
-        userAgent={'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1'}
-        mixedContentModeIOS={'always' as any}
-        mixedContentModeAndroid={'always' as any}
-        injectedJavaScriptBeforeContentLoaded={''}
-      />
-    );
-  };
-
-  const renderHLS = (uri: string) => {
-    return (
-      <Video
-        source={{ uri }}
-        style={styles.webview}
-        shouldPlay
-        useNativeControls
-        // resizeMode="contain"
-        onLoad={() => {
-          if (mountedRef.current) setIsLoading(false);
-        }}
-        onError={(e) => {
-          console.log('Video error', e);
-          if (mountedRef.current) {
-            setStreamError('Video player failed to load the stream');
-            setIsLoading(false);
-          }
-        }}
-      />
-    );
-  };
-
-  const renderUnknown = (uri: string) => renderMJPEG(uri);
-
-  const handleRetry = () => {
-    reloadCountRef.current = 0;
-    setReloadKey(k => k + 1);
-    getStreamUrl(currentMode);
-  };
-  const handleModeSwitch = (mode: 'local' | 'relay') => setStreamMode(deviceId!, mode);
-
+  
+  // --- Render Functions ---
   const renderContent = () => {
-    if (isLoading) {
-      return (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" />
-          <Text style={styles.loadingText}>Connecting to Stream...</Text>
-        </View>
-      );
-    }
-
-    if (streamError || !streamUrl) {
+    // State 1: An error has occurred.
+    if (streamError) {
       return (
         <View style={styles.offline}>
           <Text style={styles.offlineText}>STREAM OFFLINE</Text>
-          <Text style={styles.errorText}>{streamError || 'Could not get stream URL.'}</Text>
-          <TouchableOpacity style={styles.startButton} onPress={handleRetry}>
+          <Text style={styles.errorText}>{streamError}</Text>
+          <TouchableOpacity style={styles.startButton} onPress={() => getStreamUrl(currentMode)}>
             <Text style={styles.buttonText}>Retry</Text>
           </TouchableOpacity>
         </View>
       );
     }
 
-    if (!streamType) {
+    // State 2: We don't have a URL yet.
+    if (!streamUrl) {
       return (
         <View style={styles.centered}>
           <ActivityIndicator size="large" />
-          <Text style={styles.loadingText}>Detecting stream type...</Text>
+          <Text style={styles.loadingText}>Getting Stream URL...</Text>
         </View>
       );
     }
 
-    if (streamType === 'hls') return renderHLS(streamUrl);
-    if (streamType === 'mjpeg') return renderMJPEG(streamUrl);
-    return renderUnknown(streamUrl);
+    // State 3: We have a URL, render the WebView and overlay the loader if needed.
+    return (
+      <>
+        <WebView
+  source={{
+    html: `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <style>
+            body, html, img { margin: 0; padding: 0; width: 100%; height: 100%; object-fit: contain; background-color: black; }
+          </style>
+        </head>
+        <body>
+          <img src="${streamUrl}" />
+        </body>
+      </html>
+    `,
+    // --- THIS IS THE FIX ---
+    baseUrl: '',
+    // --- END FIX ---
+  }}
+  style={styles.webview}
+  onLoad={() => setIsLoading(false)}
+  onError={(event) => {
+    setStreamError(`Failed to load stream: ${event.nativeEvent.description}`);
+    setIsLoading(false);
+  }}
+/>
+        {/* The loader is rendered ON TOP of the WebView */}
+        {isLoading && (
+          <View style={[StyleSheet.absoluteFill, styles.centered, { backgroundColor: 'rgba(0,0,0,0.8)' }]}>
+            <ActivityIndicator size="large" color="#ffffff" />
+            <Text style={[styles.loadingText, { color: '#ffffff' }]}>Connecting to Stream...</Text>
+          </View>
+        )}
+      </>
+    );
   };
 
   if (!deviceId) return <SafeAreaView style={styles.container}><Text>No Device ID.</Text></SafeAreaView>;
-
+  
   const lastUpdateDate = readings.lastUpdate !== 'N/A' ? new Date(readings.lastUpdate).toLocaleString() : 'N/A';
 
   return (
@@ -469,6 +231,7 @@ export default function DeviceDetailScreen() {
       </View>
 
       <View style={styles.card}>
+        {/* Sensor readings... */}
         <View style={styles.row}>
           <Text style={styles.stat}>🌡️ Temperature:</Text>
           <Text style={[styles.value, (readings.temperature as number) > 45 && styles.alert]}>
@@ -517,7 +280,7 @@ const styles = StyleSheet.create({
   webview: { width: '100%', height: '100%', backgroundColor: '#000' },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   loadingText: { marginTop: 8, color: '#9CA3AF' },
-  offline: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 10 },
+  offline: { flex: 1, width: '100%', backgroundColor: '#111827', justifyContent: 'center', alignItems: 'center', padding: 10 },
   offlineText: { color: '#F9FAFB', fontWeight: '700', fontSize: 18 },
   errorText: { marginTop: 8, color: '#F87171', textAlign: 'center', paddingHorizontal: 20 },
   card: {
