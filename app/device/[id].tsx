@@ -329,7 +329,6 @@ export default function DeviceDetailScreen() {
       };
 
       ws.current.onerror = (error) => {
-        console.error('WebSocket error:', error);
         setStreamError('Connection error. Check network and try again.');
         setIsLoading(false);
       };
