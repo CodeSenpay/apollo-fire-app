@@ -1,31 +1,38 @@
-import { claimDevice } from "@/src/services/firebaseConfig";
+import { claimDevice, isDeviceClaimed } from "@/src/services/firebaseConfig";
 import { useAuth } from "@/src/state/pinGate";
+import { Buffer } from 'buffer';
 import { Camera, CameraView } from "expo-camera";
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from "expo-router";
 import jpeg from 'jpeg-js';
 import jsQR from 'jsqr';
 import React, { useEffect, useState } from "react";
-import { Alert, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 // Helper function to decode QR code from a base64 image string
 const decodeQrCode = (base64: string): string | null => {
   try {
-    const rawImageData = jpeg.decode(Buffer.from(base64, 'base64'), { useTArray: true });
+    // Remove data URL prefix if present
+    const cleanBase64 = base64.replace(/^data:image\/[a-z]+;base64,/, '');
+    
+    const rawImageData = jpeg.decode(Buffer.from(cleanBase64, 'base64'), { useTArray: true });
+    
     // Ensure the data is a Uint8ClampedArray for jsQR
     const imageData = new Uint8ClampedArray(rawImageData.data.buffer);
     const code = jsQR(imageData, rawImageData.width, rawImageData.height);
+    
     return code?.data || null;
   } catch (error) {
     console.error("Could not decode QR code:", error);
     return null;
   }
-  };
+};
 
 
 export default function AddDeviceScreen() {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [scanned, setScanned] = useState(false);
+  const [isProcessingGallery, setIsProcessingGallery] = useState(false);
   const { user } = useAuth();
   const router = useRouter();
 
@@ -49,7 +56,7 @@ export default function AddDeviceScreen() {
     }
   };
 
-  const handleBarcodeDataFound = (data: string) => {
+  const handleBarcodeDataFound = async (data: string) => {
     if (scanned) return;
     setScanned(true);
 
@@ -59,37 +66,74 @@ export default function AddDeviceScreen() {
       return;
     }
 
-    Alert.alert(
-      'Device Scanned!',
-      `Scanned device ID: ${data}\n\nDo you want to claim this device?`,
-      [
-        { text: 'Cancel', onPress: () => setScanned(false), style: 'cancel' },
-        { text: 'Claim', onPress: () => handleClaimDevice(data) },
-      ]
-    );
+    try {
+      // Check if device is already claimed
+      const isClaimed = await isDeviceClaimed(data);
+      
+      if (isClaimed) {
+        Alert.alert(
+          'Device Already Claimed',
+          `The device with ID: ${data} has already been claimed by another user.`,
+          [
+            { text: 'OK', onPress: () => setScanned(false) }
+          ]
+        );
+        return;
+      }
+
+      // Device is available for claiming
+      Alert.alert(
+        'Device Scanned!',
+        `Scanned device ID: ${data}\n\nDo you want to claim this device?`,
+        [
+          { text: 'Cancel', onPress: () => setScanned(false), style: 'cancel' },
+          { text: 'Claim', onPress: () => handleClaimDevice(data) },
+        ]
+      );
+    } catch (error) {
+      console.error('Error checking device claim status:', error);
+      Alert.alert(
+        'Error',
+        'Failed to check device status. Please try again.',
+        [
+          { text: 'OK', onPress: () => setScanned(false) }
+        ]
+      );
+    }
   };
 
   const handlePickFromGallery = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission Denied', 'Sorry, we need camera roll permissions to make this work!');
-      return;
-    }
-
-    let result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 1,
-      base64: true, // Request base64 data
-    });
-
-    if (!result.canceled && result.assets[0].base64) {
-      const qrData = decodeQrCode(result.assets[0].base64);
-
-      if (qrData) {
-        handleBarcodeDataFound(qrData);
-      } else {
-        Alert.alert('No QR Code Found', 'We could not find a QR code in the selected image.');
+    try {
+      setIsProcessingGallery(true);
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Sorry, we need camera roll permissions to make this work!');
+        return;
       }
+
+      let result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: 'images',
+        quality: 1,
+        base64: true, // Request base64 data
+        allowsEditing: false,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0 && result.assets[0].base64) {
+        const qrData = decodeQrCode(result.assets[0].base64);
+
+        if (qrData) {
+          handleBarcodeDataFound(qrData);
+        } else {
+          Alert.alert('No QR Code Found', 'We could not find a QR code in the selected image. Please try a different image.');
+        }
+      } else if (!result.canceled) {
+        Alert.alert('Error', 'Failed to load the selected image. Please try again.');
+      }
+    } catch (error) {
+      console.error('Error picking image from gallery:', error);
+      Alert.alert('Error', 'Failed to access gallery. Please try again.');
+    } finally {
+      setIsProcessingGallery(false);
     }
   };
 
@@ -118,8 +162,19 @@ export default function AddDeviceScreen() {
       </View>
       <View style={styles.layerBottom}>
         <Text style={styles.text}>Scan the QR code on your device</Text>
-        <TouchableOpacity style={styles.galleryButton} onPress={handlePickFromGallery}>
-          <Text style={styles.galleryButtonText}>Scan from Gallery</Text>
+        <TouchableOpacity 
+          style={[styles.galleryButton, isProcessingGallery && styles.galleryButtonDisabled]} 
+          onPress={handlePickFromGallery}
+          disabled={isProcessingGallery}
+        >
+          {isProcessingGallery ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="small" color="white" />
+              <Text style={styles.galleryButtonText}>Processing...</Text>
+            </View>
+          ) : (
+            <Text style={styles.galleryButtonText}>Scan from Gallery</Text>
+          )}
         </TouchableOpacity>
       </View>
     </View>
@@ -152,9 +207,19 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginTop: 20,
   },
+  galleryButtonDisabled: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    opacity: 0.7,
+  },
+  loadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   galleryButtonText: {
     color: 'white',
     fontSize: 16,
     fontWeight: 'bold',
+    marginLeft: 8,
   },
 });

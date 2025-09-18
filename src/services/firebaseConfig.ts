@@ -90,6 +90,26 @@ export function requestStream(deviceId: string, requested: boolean) {
 }
 
 /**
+ * Checks if a device is already claimed by checking if it exists in the devices path.
+ * @param {string} deviceId The unique ID of the device to check.
+ * @returns {Promise<boolean>} A promise that resolves to true if device is claimed, false otherwise.
+ */
+export const isDeviceClaimed = async (deviceId: string): Promise<boolean> => {
+  if (!deviceId) {
+    throw new Error("Device ID is required to check claim status.");
+  }
+
+  try {
+    const deviceRef = ref(db, `devices/${deviceId}`);
+    const snapshot = await get(deviceRef);
+    return snapshot.exists() && snapshot.val()?.ownerUID;
+  } catch (error) {
+    console.error("Failed to check device claim status:", error);
+    throw error;
+  }
+};
+
+/**
  * Claims a device for a specific user.
  * This function performs an atomic multi-path update to:
  * 1. Create a new record in the secure `/devices/{deviceId}` path, setting the owner.

@@ -174,11 +174,9 @@ export default function RootLayout() {
 
     return () => {
       if (notificationListener.current)
-        Notifications.removeNotificationSubscription(
-          notificationListener.current
-        );
+        notificationListener.current.remove();
       if (responseListener.current)
-        Notifications.removeNotificationSubscription(responseListener.current);
+        responseListener.current.remove();
     };
   }, []);
 
@@ -193,7 +191,7 @@ export default function RootLayout() {
         />
         <Stack.Screen
           name="dashboard"
-          options={{ headerShown: false, statusBarHidden: true }}
+          options={{ headerShown: false, statusBarHidden: false }}
         />
         <Stack.Screen
           name="device/settings"
