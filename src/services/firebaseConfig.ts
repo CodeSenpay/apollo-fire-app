@@ -115,6 +115,7 @@ export function subscribeToRelayStream(
 
 /**
  * Checks if a device is available for claiming by checking if it exists in the unclaimed_devices path.
+ * This is the primary method to validate a device QR code.
  * @param {string} deviceId The unique ID of the device to check.
  * @returns {Promise<boolean>} A promise that resolves to true if device is available for claim, false otherwise.
  */
@@ -122,36 +123,16 @@ export const isDeviceAvailableForClaim = async (deviceId: string): Promise<boole
   if (!deviceId) {
     return false;
   }
-
   try {
     const deviceRef = ref(db, `unclaimed_devices/${deviceId}`);
     const snapshot = await get(deviceRef);
     return snapshot.exists();
   } catch (error) {
     console.error("Failed to check if device is available for claim:", error);
-    throw error; // Rethrow to be caught by the calling function
-  }
-};
-
-/**
- * Checks if a device is already claimed by checking if it exists in the devices path.
- * @param {string} deviceId The unique ID of the device to check.
- * @returns {Promise<boolean>} A promise that resolves to true if device is claimed, false otherwise.
- */
-export const isDeviceClaimed = async (deviceId: string): Promise<boolean> => {
-  if (!deviceId) {
-    throw new Error("Device ID is required to check claim status.");
-  }
-
-  try {
-    const deviceRef = ref(db, `devices/${deviceId}`);
-    const snapshot = await get(deviceRef);
-    return snapshot.exists() && snapshot.val()?.ownerUID;
-  } catch (error) {
-    console.error("Failed to check device claim status:", error);
     throw error;
   }
 };
+
 
 /**
  * Claims a device for a specific user.

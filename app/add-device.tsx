@@ -1,4 +1,4 @@
-import { claimDevice, isDeviceAvailableForClaim, isDeviceClaimed } from "@/src/services/firebaseConfig";
+import { claimDevice, isDeviceAvailableForClaim } from "@/src/services/firebaseConfig";
 import { useAuth } from "@/src/state/pinGate";
 import { Buffer } from 'buffer';
 import { Camera, CameraView } from "expo-camera";
@@ -69,46 +69,30 @@ export default function AddDeviceScreen() {
     try {
       const isAvailable = await isDeviceAvailableForClaim(data);
       
-      if (!isAvailable) {
+      if (isAvailable) {
+        // If it's available, prompt the user to claim it.
         Alert.alert(
-          'Invalid QR Code',
-          'This QR code does not correspond to a device that is ready to be claimed.',
-          [{ text: 'OK', onPress: () => setScanned(false) }]
-        );
-        return;
-      }
-
-      // Check if device is already claimed
-      const isClaimed = await isDeviceClaimed(data);
-      
-      if (isClaimed) {
-        Alert.alert(
-          'Device Already Claimed',
-          `The device with ID: ${data} has already been claimed by another user.`,
+          'Device Available!',
+          `Do you want to claim the device with ID: ${data}?`,
           [
-            { text: 'OK', onPress: () => setScanned(false) }
+            { text: 'Cancel', onPress: () => setScanned(false), style: 'cancel' },
+            { text: 'Claim', onPress: () => handleClaimDevice(data) },
           ]
         );
-        return;
+      } else {
+        // If not available, show a generic error.
+        Alert.alert(
+          'Device Unavailable',
+          'This device is either already claimed or the QR code is invalid.',
+          [{ text: 'OK', onPress: () => setScanned(false) }]
+        );
       }
-
-      // Device is available for claiming
-      Alert.alert(
-        'Device Scanned!',
-        `Scanned device ID: ${data}\n\nDo you want to claim this device?`,
-        [
-          { text: 'Cancel', onPress: () => setScanned(false), style: 'cancel' },
-          { text: 'Claim', onPress: () => handleClaimDevice(data) },
-        ]
-      );
-    } catch (error) {
-      console.error('Error checking device claim status:', error);
+    } catch (error: any) {
+      console.error('Error during device claim process:', error);
       Alert.alert(
         'Error',
-        'Failed to check device status. Please try again.',
-        [
-          { text: 'OK', onPress: () => setScanned(false) }
-        ]
+        `An error occurred: ${error.message || 'Please try again.'}`,
+        [{ text: 'OK', onPress: () => setScanned(false) }]
       );
     }
   };
