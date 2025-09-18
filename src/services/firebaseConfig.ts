@@ -89,6 +89,30 @@ export function requestStream(deviceId: string, requested: boolean) {
   return set(ref(db, ctrlPath), requested);
 }
 
+// Helper to set relay stream URL (for devices to publish their relay stream)
+export function setRelayStreamUrl(deviceId: string, streamUrl: string) {
+  const relayUrlRef = ref(db, `devices/${deviceId}/relay/streamUrl`);
+  return set(relayUrlRef, streamUrl);
+}
+
+// Helper to get relay stream URL
+export async function getRelayStreamUrl(deviceId: string): Promise<string | null> {
+  const relayUrlRef = ref(db, `devices/${deviceId}/relay/streamUrl`);
+  const snapshot = await get(relayUrlRef);
+  return snapshot.exists() ? snapshot.val() : null;
+}
+
+// Helper to subscribe to relay stream updates
+export function subscribeToRelayStream(
+  deviceId: string,
+  callback: (streamUrl: string | null) => void
+) {
+  const relayUrlRef = ref(db, `devices/${deviceId}/relay/streamUrl`);
+  return onValue(relayUrlRef, (snapshot) => {
+    callback(snapshot.exists() ? snapshot.val() : null);
+  });
+}
+
 /**
  * Checks if a device is already claimed by checking if it exists in the devices path.
  * @param {string} deviceId The unique ID of the device to check.
