@@ -1,4 +1,4 @@
-import { claimDevice, isDeviceClaimed } from "@/src/services/firebaseConfig";
+import { claimDevice, isDeviceAvailableForClaim, isDeviceClaimed } from "@/src/services/firebaseConfig";
 import { useAuth } from "@/src/state/pinGate";
 import { Buffer } from 'buffer';
 import { Camera, CameraView } from "expo-camera";
@@ -67,6 +67,17 @@ export default function AddDeviceScreen() {
     }
 
     try {
+      const isAvailable = await isDeviceAvailableForClaim(data);
+      
+      if (!isAvailable) {
+        Alert.alert(
+          'Invalid QR Code',
+          'This QR code does not correspond to a device that is ready to be claimed.',
+          [{ text: 'OK', onPress: () => setScanned(false) }]
+        );
+        return;
+      }
+
       // Check if device is already claimed
       const isClaimed = await isDeviceClaimed(data);
       
