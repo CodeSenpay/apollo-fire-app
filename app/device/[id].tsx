@@ -16,17 +16,14 @@ import {
   View,
 } from 'react-native';
 
-// Optimized helper function to convert raw binary data to a base64 string
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  const chunkSize = 8192; // Process in chunks to avoid blocking
+// Helper function to convert raw binary data to a base64 string
+function arrayBufferToBase64(buffer: ArrayBuffer) {
   let binary = '';
-  
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.slice(i, i + chunkSize);
-    binary += String.fromCharCode.apply(null, Array.from(chunk));
+  const bytes = new Uint8Array(buffer);
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
   }
-  
   return btoa(binary);
 }
 
@@ -182,6 +179,13 @@ export default function DeviceDetailScreen() {
         clearInterval(httpPollingRef.current);
         httpPollingRef.current = null;
       }
+      // Clear message queue and reset processing state
+      messageQueueRef.current = [];
+      processingMessageRef.current = false;
+      if (frameProcessingTimeoutRef.current) {
+        clearTimeout(frameProcessingTimeoutRef.current);
+        frameProcessingTimeoutRef.current = null;
+      }
       if (ws.current) {
         ws.current.close();
         ws.current = null;
@@ -195,15 +199,15 @@ export default function DeviceDetailScreen() {
   }, [currentMode, getStreamUrl]);
 
   // --- Optimized frame timing and buffer refs ---
-  const [frameRate, setFrameRate] = useState(10); // Start with lower frame rate
+  const [frameRate, setFrameRate] = useState(3); // Start with low frame rate for stability
   const FRAME_INTERVAL = Math.round(1000 / frameRate);
 
-  // Quality-based frame rate adjustment
+  // Quality-based frame rate adjustment - conservative to prevent ESP32 overflow
   useEffect(() => {
     const qualitySettings = {
-      low: 8,    // Reduced for stability
-      medium: 12, // Reduced for stability
-      high: 20   // Reduced for stability
+      low: 2,    // Low - 2 FPS
+      medium: 3, // Medium - 3 FPS  
+      high: 5    // High - 5 FPS
     };
     setFrameRate(qualitySettings[streamQuality]);
   }, [streamQuality]);
@@ -217,8 +221,72 @@ export default function DeviceDetailScreen() {
   const frameCountRef = useRef(0);
   const lastFrameTimeRef = useRef(0);
   const performanceRef = useRef({ droppedFrames: 0, totalFrames: 0 });
+  
+  // Message throttling and backpressure handling
+  const messageQueueRef = useRef<ArrayBuffer[]>([]);
+  const processingMessageRef = useRef(false);
+  const lastProcessedMessageRef = useRef<number>(0);
+  const maxQueueSize = 2; // Allow small buffer for smooth playback
+  const frameProcessingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Simplified frame swapping - immediate display for responsiveness
+  // Throttled message processing to prevent ESP32 overflow
+  const processMessageQueue = useCallback(async () => {
+    if (processingMessageRef.current || messageQueueRef.current.length === 0) {
+      return;
+    }
+
+    const now = Date.now();
+    const timeSinceLastProcess = now - lastProcessedMessageRef.current;
+    
+    // Respect frame rate throttling
+    if (timeSinceLastProcess < FRAME_INTERVAL) {
+      const delay = FRAME_INTERVAL - timeSinceLastProcess;
+      frameProcessingTimeoutRef.current = setTimeout(processMessageQueue, delay);
+      return;
+    }
+
+    processingMessageRef.current = true;
+    
+    // Process the latest message, keep queue small
+    const latestMessage = messageQueueRef.current.pop();
+    if (messageQueueRef.current.length > 1) {
+      messageQueueRef.current = messageQueueRef.current.slice(-1); // Keep only latest
+      performanceRef.current.droppedFrames++;
+    }
+    
+    if (latestMessage) {
+      try {
+        const base64Data = arrayBufferToBase64(latestMessage);
+        const dataUri = `data:image/jpeg;base64,${base64Data}`;
+
+        // Write to inactive buffer and mark it as not loaded yet
+        if (loadTarget.current === 'A') {
+          bufferARef.current = dataUri;
+          loadedARef.current = false;
+          setFrameA(dataUri);
+        } else {
+          bufferBRef.current = dataUri;
+          loadedBRef.current = false;
+          setFrameB(dataUri);
+        }
+
+        lastProcessedMessageRef.current = now;
+        performanceRef.current.totalFrames++;
+        
+      } catch (error) {
+        console.error('Error processing frame:', error);
+      }
+    }
+
+    processingMessageRef.current = false;
+    
+    // Schedule next processing if there are more messages
+    if (messageQueueRef.current.length > 0) {
+      frameProcessingTimeoutRef.current = setTimeout(processMessageQueue, FRAME_INTERVAL);
+    }
+  }, [FRAME_INTERVAL]);
+
+  // Helper that will attempt a swap only if the buffer is loaded and the interval passed
   function scheduleSwapIfReady(buffer: 'A' | 'B') {
     const loaded = buffer === 'A' ? loadedARef.current : loadedBRef.current;
     if (!loaded) return;
@@ -226,11 +294,8 @@ export default function DeviceDetailScreen() {
     const now = Date.now();
     const since = now - (lastSwapRef.current || 0);
 
-    // Performance tracking
-    performanceRef.current.totalFrames++;
-    
-    // Simplified logic - always swap if enough time has passed
-    if (since >= FRAME_INTERVAL * 0.5) { // More aggressive swapping
+    // if enough time passed do immediate swap
+    if (since >= FRAME_INTERVAL) {
       lastSwapRef.current = now;
       setActiveFrame(buffer);
       // flip loadTarget for next incoming frame
@@ -242,22 +307,23 @@ export default function DeviceDetailScreen() {
       return;
     }
 
-    // Only schedule if we're not already scheduled
-    if (!scheduledSwapRef.current) {
-      const delay = Math.max(FRAME_INTERVAL - since, 16); // Minimum 16ms delay
-      scheduledSwapRef.current = setTimeout(() => {
-        // only perform swap if buffer still loaded and has not been overwritten
-        const stillLoaded = buffer === 'A' ? loadedARef.current : loadedBRef.current;
-        if (!stillLoaded) {
-          scheduledSwapRef.current = null;
-          return;
-        }
-        lastSwapRef.current = Date.now();
-        setActiveFrame(buffer);
-        loadTarget.current = buffer === 'A' ? 'B' : 'A';
-        scheduledSwapRef.current = null;
-      }, delay);
+    // schedule a delayed swap to hit target frame interval
+    const delay = FRAME_INTERVAL - since;
+    if (scheduledSwapRef.current) {
+      clearTimeout(scheduledSwapRef.current);
     }
+    scheduledSwapRef.current = setTimeout(() => {
+      // only perform swap if buffer still loaded and has not been overwritten
+      const stillLoaded = buffer === 'A' ? loadedARef.current : loadedBRef.current;
+      if (!stillLoaded) {
+        scheduledSwapRef.current = null;
+        return;
+      }
+      lastSwapRef.current = Date.now();
+      setActiveFrame(buffer);
+      loadTarget.current = buffer === 'A' ? 'B' : 'A';
+      scheduledSwapRef.current = null;
+    }, delay);
   }
 
   // Auto-reconnect function
@@ -321,9 +387,17 @@ export default function DeviceDetailScreen() {
         frameCountRef.current = 0;
         lastFrameTimeRef.current = 0;
         performanceRef.current = { droppedFrames: 0, totalFrames: 0 };
+        // Reset message queue and processing state
+        messageQueueRef.current = [];
+        processingMessageRef.current = false;
+        lastProcessedMessageRef.current = 0;
         if (scheduledSwapRef.current) {
           clearTimeout(scheduledSwapRef.current);
           scheduledSwapRef.current = null;
+        }
+        if (frameProcessingTimeoutRef.current) {
+          clearTimeout(frameProcessingTimeoutRef.current);
+          frameProcessingTimeoutRef.current = null;
         }
         console.log('WebSocket connected successfully');
       };
@@ -341,6 +415,13 @@ export default function DeviceDetailScreen() {
         bufferBRef.current = null;
         loadedARef.current = false;
         loadedBRef.current = false;
+        // Clear message queue on close
+        messageQueueRef.current = [];
+        processingMessageRef.current = false;
+        if (frameProcessingTimeoutRef.current) {
+          clearTimeout(frameProcessingTimeoutRef.current);
+          frameProcessingTimeoutRef.current = null;
+        }
         
         if (event.code !== 1000) { // Not a normal closure
           setStreamError('Connection lost. Attempting to reconnect...');
@@ -353,29 +434,26 @@ export default function DeviceDetailScreen() {
           const now = Date.now();
           frameCountRef.current++;
           
-          // Skip frames if we're receiving them too fast (more aggressive)
-          if (lastFrameTimeRef.current > 0 && now - lastFrameTimeRef.current < FRAME_INTERVAL * 0.3) {
+          // Add message to queue for throttled processing
+          const messageData = event.data as ArrayBuffer;
+          
+          // Drop oldest messages if queue is too large to prevent memory buildup
+          if (messageQueueRef.current.length >= maxQueueSize) {
+            messageQueueRef.current.shift(); // Remove oldest
             performanceRef.current.droppedFrames++;
-            return;
           }
-          lastFrameTimeRef.current = now;
-
-          // convert binary to data uri
-          const base64Data = arrayBufferToBase64(event.data as ArrayBuffer);
-          const dataUri = `data:image/jpeg;base64,${base64Data}`;
-
-          // write to inactive buffer and mark it as not loaded yet
-          if (loadTarget.current === 'A') {
-            bufferARef.current = dataUri;
-            loadedARef.current = false;
-            setFrameA(dataUri);
-          } else {
-            bufferBRef.current = dataUri;
-            loadedBRef.current = false;
-            setFrameB(dataUri);
+          
+          // Add new message to queue
+          messageQueueRef.current.push(messageData);
+          
+          // Trigger processing if not already running
+          if (!processingMessageRef.current) {
+            setTimeout(processMessageQueue, 0);
           }
+          
         } catch (error) {
-          console.error('Error processing frame:', error);
+          console.error('Error queuing frame:', error);
+          performanceRef.current.droppedFrames++;
         }
       };
     } else {
@@ -423,7 +501,7 @@ export default function DeviceDetailScreen() {
             console.error('HTTP polling error:', error);
             setStreamError('Failed to fetch relay stream');
           }
-        }, 1000 / frameRate); // Poll at current frame rate
+        }, FRAME_INTERVAL); // Poll at throttled frame rate
       };
       
       startHttpPolling();
@@ -442,6 +520,13 @@ export default function DeviceDetailScreen() {
       if (httpPollingRef.current) {
         clearInterval(httpPollingRef.current);
         httpPollingRef.current = null;
+      }
+      // Clear message queue on cleanup
+      messageQueueRef.current = [];
+      processingMessageRef.current = false;
+      if (frameProcessingTimeoutRef.current) {
+        clearTimeout(frameProcessingTimeoutRef.current);
+        frameProcessingTimeoutRef.current = null;
       }
     };
   }, [streamUrl, currentMode]);
