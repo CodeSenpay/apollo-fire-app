@@ -72,9 +72,11 @@ async function getPushNotificationToken(): Promise<string | null> {
   }
 
   // Use your Expo project ID
-  return (await Notifications.getExpoPushTokenAsync({
+  return (
+    await Notifications.getExpoPushTokenAsync({
       projectId: process.env.EXPO_PUBLIC_EAS_PROJECT_ID,
-  })).data;
+    })
+  ).data;
 }
 
 // Main function to coordinate the process (now uses the new Firebase function)
