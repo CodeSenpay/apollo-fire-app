@@ -1,5 +1,5 @@
-import { auth } from "@/src/services/firebaseConfig";
-import { createUserWithEmailAndPassword, signInAnonymously } from "firebase/auth";
+import { loginAsGuest, loginWithEmail, signUpWithEmail } from "@/src/services/apiConfig";
+import { useAuth } from "@/src/state/pinGate";
 import React, { useState } from "react";
 import { Alert, Image, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 
@@ -7,13 +7,33 @@ export default function AuthScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [isSignUp, setIsSignUp] = useState(true);
+  const { setUser } = useAuth();
 
   const handleGuestLogin = async () => {
+    console.log("Mic Check 123...");
     setLoading(true);
     try {
-      await signInAnonymously(auth);
+      const response = await loginAsGuest();
+      console.log(response);
+      setUser(response.user);
     } catch (e: any) {
       Alert.alert("Guest Login Error", e.message);
+    }
+    setLoading(false);
+  };
+
+  const handleLogin = async () => {
+    if (!email || !password) {
+      Alert.alert("Hold up!", "Please fill in both email and password.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const response = await loginWithEmail(email, password);
+      setUser(response.user);
+    } catch (e: any) {
+      Alert.alert("Login Error", e.message);
     }
     setLoading(false);
   };
@@ -25,7 +45,8 @@ export default function AuthScreen() {
     }
     setLoading(true);
     try {
-      await createUserWithEmailAndPassword(auth, email, password);
+      const response = await signUpWithEmail(email, password);
+      setUser(response.user);
     } catch (e: any) {
       Alert.alert("Sign Up Error", e.message);
     }

@@ -1,4 +1,4 @@
-import { getDeviceDetails, subscribeToUserDevices } from '@/src/services/firebaseConfig';
+import { getDeviceDetails, getUserDevices } from '@/src/services/apiConfig';
 import { useAuth } from '@/src/state/pinGate';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -19,18 +19,25 @@ export default function DeviceListScreen() {
   useEffect(() => {
     if (!user) return;
 
-    const unsubscribe = subscribeToUserDevices(user.uid, async (deviceIds) => {
+    const fetchDevices = async () => {
       setLoading(true);
-      const deviceDetailsPromises = deviceIds.map(async (id) => {
-        const details = await getDeviceDetails(id);
-        return { id, name: details.name || `Device ${id.slice(0, 6)}` };
-      });
-      const devicesWithDetails = await Promise.all(deviceDetailsPromises);
-      setDevices(devicesWithDetails);
-      setLoading(false);
-    });
+      try {
+        const deviceIds = await getUserDevices();
+        const deviceDetailsPromises = deviceIds.map(async (id) => {
+          const details = await getDeviceDetails(id);
+          return { id, name: details.name || `Device ${id.slice(0, 6)}` };
+        });
+        const devicesWithDetails = await Promise.all(deviceDetailsPromises);
+        setDevices(devicesWithDetails);
+      } catch (error) {
+        console.error('Error fetching devices:', error);
+        setDevices([]);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-    return () => unsubscribe();
+    fetchDevices();
   }, [user]);
 
   if (loading) {

@@ -4,13 +4,10 @@ import { Stack, usePathname, useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import "./global.css";
 
+import { registerPushToken } from "@/src/services/apiConfig";
 import { AuthProvider, useAuth } from "@/src/state/pinGate";
-
-// 🔔 MODIFIED: Firebase and notifications imports
-import { auth, db } from "@/src/services/firebaseConfig";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
-import { get, ref, set } from "firebase/database";
 import { Alert, Platform } from "react-native";
 
 // Show notifications even when app is foregrounded
@@ -25,31 +22,13 @@ Notifications.setNotificationHandler({
     }),
 });
 
-// 🔔 NEW: This function now checks and saves the token directly to Firebase RTDB
-async function registerTokenInFirebase(token: string) {
-  const user = auth.currentUser;
-  if (!user) {
-    console.log("User not logged in, cannot register FCM token.");
-    return;
-  }
-
-  const userId = user.uid;
-  const tokenRef = ref(db, `users/${userId}/fcmToken`);
-
+// Register push notification token with API
+async function registerTokenWithAPI(token: string) {
   try {
-    const snapshot = await get(tokenRef);
-    const existingToken = snapshot.val();
-
-    // Only update Firebase if the token is new or doesn't exist yet
-    if (existingToken === token) {
-      console.log("FCM token is already up to date in Firebase.");
-      return;
-    }
-
-    await set(tokenRef, token);
-    console.log("Successfully saved new FCM token for user:", userId);
+    await registerPushToken(token);
+    console.log("Successfully registered push notification token with API");
   } catch (error) {
-    console.error("Error saving FCM token to Firebase:", error);
+    console.error("Error registering push token with API:", error);
   }
 }
 
@@ -79,12 +58,12 @@ async function getPushNotificationToken(): Promise<string | null> {
   ).data;
 }
 
-// Main function to coordinate the process (now uses the new Firebase function)
+// Main function to coordinate the process (now uses the new API function)
 export async function registerForPushNotificationsAsync() {
   try {
     const token = await getPushNotificationToken();
     if (token) {
-      await registerTokenInFirebase(token);
+      await registerTokenWithAPI(token);
     }
   } catch (error) {
     console.error(
@@ -175,12 +154,8 @@ export default function RootLayout() {
       });
 
     return () => {
-      if (notificationListener.current)
-        Notifications.removeNotificationSubscription(
-          notificationListener.current
-        );
-      if (responseListener.current)
-        Notifications.removeNotificationSubscription(responseListener.current);
+      if (notificationListener.current) notificationListener.current.remove();
+      if (responseListener.current) responseListener.current.remove();
     };
   }, []);
 
@@ -193,9 +168,21 @@ export default function RootLayout() {
           name="login"
           options={{ presentation: "fullScreenModal", headerShown: false }}
         />
+     <Stack.Screen
+          name="auth"
+          options={{ presentation: "fullScreenModal", headerShown: false }}
+        />
         <Stack.Screen
           name="dashboard"
-          options={{ headerShown: false, statusBarHidden: true }}
+          options={{ headerShown: false, statusBarHidden: false }}
+        />
+        <Stack.Screen
+          name="device/settings"
+          options={{
+            headerShown: true,
+            headerTitle: "Device Settings",
+            presentation: "modal",
+          }}
         />
         <Stack.Screen name="profile" options={{ headerShown: false }} />
         <Stack.Screen name="addsecurity" options={{ headerShown: false }} />

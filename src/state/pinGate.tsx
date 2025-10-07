@@ -1,5 +1,4 @@
-import { auth } from '@/src/services/firebaseConfig';
-import { onAuthStateChanged, User } from 'firebase/auth';
+import { getCurrentUser, getUserData, User } from '@/src/services/apiConfig';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { AppState } from 'react-native';
 
@@ -10,6 +9,7 @@ interface AuthContextType {
   loading: boolean;
   unlocked: boolean;
   setUnlocked: (unlocked: boolean) => void;
+  setUser: (user: User | null) => void;
 }
 
 // Create the context
@@ -35,20 +35,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Listen for Firebase authentication state changes
+  // Check for existing user session on mount
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      // If the user logs out, we must also re-lock the app
-      if (!currentUser) {
-        setUnlocked(false);
+    const checkAuth = async () => {
+      try {
+        // First check local storage
+        const storedUser = await getUserData();
+        if (storedUser) {
+          setUser(storedUser);
+          // Optionally verify with API
+          const currentUser = await getCurrentUser();
+          if (currentUser) {
+            setUser(currentUser);
+          } else {
+            setUser(null);
+          }
+        }
+      } catch (error) {
+        console.error('Error checking auth:', error);
+        setUser(null);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
-    });
+    };
 
-    // Cleanup subscription on unmount
-    return () => unsubscribe();
+    checkAuth();
   }, []);
+
+  const handleSetUser = (newUser: User | null) => {
+    setUser(newUser);
+    // If the user logs out, we must also re-lock the app
+    if (!newUser) {
+      setUnlocked(false);
+    }
+  };
 
   const value = {
     user,
@@ -56,6 +76,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loading,
     unlocked,
     setUnlocked,
+    setUser: handleSetUser,
   };
 
   return (

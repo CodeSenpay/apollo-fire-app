@@ -14,13 +14,23 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#ffffff"
       },
+      "manifest": {
+        "networkSecurityConfig": "@xml/network_security_config"
+      },
+      "permissions": ["android.permission.INTERNET"],
+      "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": true,
       "package": "com.apollofireapp",
       "googleServicesFile": "./google-services.json"
