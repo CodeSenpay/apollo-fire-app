@@ -66,7 +66,7 @@ export default function DeviceDetailScreen() {
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [streamError, setStreamError] = useState<string | null>(null);
-  const [currentMode, setCurrentMode] = useState<"local" | "relay">("relay");
+  const [currentMode, setCurrentMode] = useState<"local" | "relay">("local");
   const [readings, setReadings] = useState<Readings>({
     gasValue: "N/A",
     isFlameDetected: false,
@@ -103,26 +103,22 @@ export default function DeviceDetailScreen() {
       setStreamUrl(null);
 
       try {
-        if (mode === "relay") {
-          // Get relay stream URL from API
-          const relayUrl = await getRelayStreamUrl(deviceId);
-          if (relayUrl) {
-            setStreamUrl(relayUrl);
-            setIsLoading(false);
-          } else {
-            setStreamError(
-              "Relay stream not available. Device may be offline."
-            );
-            setIsLoading(false);
-          }
-          return;
+        // Get stream URL from database for both local and relay modes
+        const dbStreamUrl = await getRelayStreamUrl(deviceId);
+        
+        if (dbStreamUrl) {
+          console.log(`Stream URL from database (${mode} mode):`, dbStreamUrl);
+          setStreamUrl(dbStreamUrl);
+          setIsLoading(false);
+        } else {
+          setStreamError(
+            `${mode === 'local' ? 'Local' : 'Relay'} stream not available. Device may be offline or not streaming.`
+          );
+          setIsLoading(false);
         }
-
-        // Local streaming - for now, show error as it requires device-specific setup
-        setStreamError("Local streaming not yet implemented with API backend.");
-        setIsLoading(false);
       } catch (e: any) {
-        setStreamError(e.message);
+        console.error('Error fetching stream URL:', e);
+        setStreamError(e.message || 'Failed to fetch stream URL');
         setIsLoading(false);
       }
     },

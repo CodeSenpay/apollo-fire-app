@@ -274,20 +274,36 @@ export const setStreamMode = async (
   deviceId: string,
   mode: 'local' | 'relay'
 ): Promise<void> => {
-  await apiRequest(`/devices/${deviceId}/stream-mode`, {
-    method: 'PUT',
-    body: JSON.stringify({ mode }),
-  });
+  try {
+    await axios.put(`http://192.168.1.14:8000/api/devices/${deviceId}/stream-mode`, {
+      mode
+    });
+  } catch (error) {
+    console.error('Error setting stream mode:', error);
+    if (axios.isAxiosError(error)) {
+      console.error('Response data:', error.response?.data);
+      console.error('Response status:', error.response?.status);
+    }
+    throw error;
+  }
 };
 
 export const requestStream = async (
   deviceId: string,
   requested: boolean
 ): Promise<void> => {
-  await apiRequest(`/devices/${deviceId}/stream-request`, {
-    method: 'PUT',
-    body: JSON.stringify({ requested }),
-  });
+  try {
+    await axios.put(`http://192.168.1.14:8000/api/devices/${deviceId}/stream-request`, {
+      requested
+    });
+  } catch (error) {
+    console.error('Error requesting stream:', error);
+    if (axios.isAxiosError(error)) {
+      console.error('Response data:', error.response?.data);
+      console.error('Response status:', error.response?.status);
+    }
+    throw error;
+  }
 };
 
 export const getRelayStreamUrl = async (deviceId: string): Promise<string | null> => {
