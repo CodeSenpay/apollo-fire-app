@@ -8,7 +8,6 @@ export default function DeviceSettingsScreen() {
   const { id: deviceId } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
 
-  const [tempThreshold, setTempThreshold] = useState('');
   const [gasThreshold, setGasThreshold] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -20,12 +19,10 @@ export default function DeviceSettingsScreen() {
     const fetchThresholds = async () => {
       try {
         const data = await getDeviceThresholds(deviceId);
-        setTempThreshold(data.temperature?.toString() || '45.0');
         setGasThreshold(data.gas?.toString() || '1000');
       } catch (error) {
         console.error('Error fetching thresholds:', error);
         // Set default values if fetch fails
-        setTempThreshold('45.0');
         setGasThreshold('1000');
       } finally {
         setLoading(false);
@@ -39,25 +36,21 @@ export default function DeviceSettingsScreen() {
     if (!deviceId) return;
     setSaving(true);
 
-    const temp = parseFloat(tempThreshold);
     const gas = parseInt(gasThreshold, 10);
 
-    if (isNaN(temp) || isNaN(gas)) {
-      Alert.alert('Invalid Input', 'Please enter valid numbers for the thresholds.');
+    if (isNaN(gas)) {
+      Alert.alert('Invalid Input', 'Please enter a valid number for the gas threshold.');
       setSaving(false);
       return;
     }
 
     try {
-      await updateDeviceThresholds(deviceId, {
-        temperature: temp,
-        gas: gas,
-      });
-      Alert.alert('Success', 'Thresholds have been updated.', [
+      await updateDeviceThresholds(deviceId, gas);
+      Alert.alert('Success', 'Gas threshold has been updated.', [
         { text: 'OK', onPress: () => router.back() },
       ]);
     } catch (error) {
-      Alert.alert('Error', 'Failed to save thresholds. Please try again.');
+      Alert.alert('Error', 'Failed to save threshold. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -76,19 +69,8 @@ export default function DeviceSettingsScreen() {
       <View style={styles.form}>
         <Text style={styles.title}>Sensor Thresholds</Text>
         <Text style={styles.subtitle}>
-          Adjust the values that trigger a critical alert. The device will restart to apply changes.
+          Adjust the gas level that triggers a critical alert. The device will restart to apply changes.
         </Text>
-
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>High Temperature Alert (°C)</Text>
-          <TextInput
-            style={styles.input}
-            value={tempThreshold}
-            onChangeText={setTempThreshold}
-            keyboardType="numeric"
-            placeholder="e.g., 45.0"
-          />
-        </View>
 
         <View style={styles.inputGroup}>
           <Text style={styles.label}>Gas ADC Alert Level</Text>

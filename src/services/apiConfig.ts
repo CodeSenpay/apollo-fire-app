@@ -262,17 +262,17 @@ export const claimDevice = async (deviceId: string, userId: string): Promise<voi
 
 export const updateDeviceThresholds = async (
   deviceId: string,
-  thresholds: { temperature: number; gas: number }
+  gasThreshold: number
 ): Promise<void> => {
   await apiRequest(`/devices/${deviceId}/thresholds`, {
     method: 'PUT',
-    body: JSON.stringify(thresholds),
+    body: JSON.stringify({ gas: gasThreshold }),
   });
 };
 
 export const getDeviceThresholds = async (
   deviceId: string
-): Promise<{ temperature: number; gas: number }> => {
+): Promise<{ gas: number }> => {
   return apiRequest(`/devices/${deviceId}/thresholds`);
 };
 
