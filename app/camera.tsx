@@ -1,9 +1,9 @@
 import { getDeviceDetails, getUserDevices } from '@/src/services/apiConfig';
 import { useAuth } from '@/src/state/pinGate';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useState } from 'react';
+import { ActivityIndicator, FlatList, RefreshControl, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 interface DeviceInfo {
   id: string;
@@ -15,30 +15,57 @@ export default function DeviceListScreen() {
   const router = useRouter();
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    if (!user) return;
+  const fetchDevices = useCallback(async () => {
+    if (!user) {
+      console.log('No user found, skipping device fetch');
+      setLoading(false);
+      return;
+    }
 
-    const fetchDevices = async () => {
-      setLoading(true);
-      try {
-        const deviceIds = await getUserDevices();
-        const deviceDetailsPromises = deviceIds.map(async (id) => {
-          const details = await getDeviceDetails(id);
-          return { id, name: details.name || `Device ${id.slice(0, 6)}` };
-        });
-        const devicesWithDetails = await Promise.all(deviceDetailsPromises);
-        setDevices(devicesWithDetails);
-      } catch (error) {
-        console.error('Error fetching devices:', error);
+    console.log('=== FETCHING DEVICES ===');
+    console.log('User:', JSON.stringify(user, null, 2));
+    
+    try {
+      const deviceIds = await getUserDevices();
+      console.log('Received device IDs:', deviceIds);
+      
+      if (deviceIds.length === 0) {
+        console.log('No devices found for user');
         setDevices([]);
-      } finally {
-        setLoading(false);
+        return;
       }
-    };
 
-    fetchDevices();
+      // For now, just use device IDs without fetching details
+      // since getDeviceDetails might not be migrated yet
+      const devicesWithDetails = deviceIds.map(id => ({
+        id,
+        name: `Device ${id.slice(0, 8)}`
+      }));
+      
+      console.log('Setting devices:', devicesWithDetails);
+      setDevices(devicesWithDetails);
+    } catch (error) {
+      console.error('Error fetching devices:', error);
+      setDevices([]);
+    }
   }, [user]);
+
+  // Fetch devices when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      console.log('Screen focused, fetching devices...');
+      setLoading(true);
+      fetchDevices().finally(() => setLoading(false));
+    }, [fetchDevices])
+  );
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchDevices();
+    setRefreshing(false);
+  }, [fetchDevices]);
 
   if (loading) {
     return (
@@ -59,6 +86,9 @@ export default function DeviceListScreen() {
         <FlatList
           data={devices}
           keyExtractor={(item) => item.id}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
           renderItem={({ item }) => (
             <TouchableOpacity
               style={styles.itemContainer}

@@ -147,7 +147,7 @@ export const signUpWithEmail = async (
 
 export const loginAsGuest = async (): Promise<AuthResponse> => {
   
-  const response = await axios.get('http://192.168.1.104:3000/api/users/register-user-id');
+  const response = await axios.get('http://192.168.1.14:8000/api/users/register-user-id');
   
   await setUserData({id:response.data.userId, email:"guest@gmail.com", name:"guest" });
   
@@ -183,8 +183,33 @@ export const getCurrentUser = async (): Promise<User | null> => {
 
 // Device API calls
 export const getUserDevices = async (): Promise<string[]> => {
-  const data = await apiRequest('/devices');
-  return data.devices || [];
+  try {
+    const user = await getUserData();
+    if (!user) {
+      console.error('No user found');
+      return [];
+    }
+    console.log("Fetching devices for user:", user.id);
+    const response = await axios.get(`http://192.168.1.14:8000/api/users/${user.id}/devices`);
+    
+    console.log("API Response:", JSON.stringify(response.data, null, 2));
+    
+    if (response.data.success && response.data.devices) {
+      const deviceIds = response.data.devices.map((device: any) => device.id);
+      console.log("Device IDs:", deviceIds);
+      return deviceIds;
+    }
+    
+    console.log("No devices found or unsuccessful response");
+    return [];
+  } catch (error) {
+    console.error('Error fetching user devices:', error);
+    if (axios.isAxiosError(error)) {
+      console.error('Response data:', error.response?.data);
+      console.error('Response status:', error.response?.status);
+    }
+    return [];
+  }
 };
 
 export const getDeviceDetails = async (deviceId: string): Promise<any> => {
@@ -202,8 +227,8 @@ export const getDeviceReadings = async (deviceId: string): Promise<DeviceData | 
 
 export const isDeviceAvailableForClaim = async (deviceId: string): Promise<boolean> => {
   try {
-    const data = await apiRequest(`/devices/${deviceId}/available`);
-    return data.available === true;
+    const response = await axios.get(`http://192.168.1.14:8000/api/users/devices/${deviceId}/available`);
+    return response.data.available === true;
   } catch (error) {
     console.error('Error checking device availability:', error);
     return false;
@@ -211,9 +236,8 @@ export const isDeviceAvailableForClaim = async (deviceId: string): Promise<boole
 };
 
 export const claimDevice = async (deviceId: string, userId: string): Promise<void> => {
-  await apiRequest(`/devices/${deviceId}/claim`, {
-    method: 'POST',
-    body: JSON.stringify({ userId }),
+  await axios.post(`http://192.168.1.14:8000/api/users/devices/${deviceId}/claim`, {
+    userId
   });
 };
 
@@ -267,7 +291,7 @@ export const getRelayStreamUrl = async (deviceId: string): Promise<string | null
 export const registerPushToken = async (token: string, userId: string): Promise<void> => {
   console.log(JSON.stringify({ token, userId }))
   try {
-    await fetch('http://192.168.1.104:3000/api/users/register-token', {
+    await fetch('http://192.168.1.14:8000/api/users/register-token', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
