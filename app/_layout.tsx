@@ -61,8 +61,10 @@ async function getPushNotificationToken(): Promise<string | null> {
 // Main function to coordinate the process (now uses the new API function)
 export async function registerForPushNotificationsAsync(userId: string) {
   try {
+    console.log(`Kana man karon kay ni run ni nga part`);
     const token = await getPushNotificationToken();
-    console.log(`Mao ni ang Token Bai : ${token}`);
+    console.log(`Kana man karon kay ni run ni nga part 2`);
+    
     if (token) {
       await registerTokenWithAPI(token, userId);
     }
@@ -109,6 +111,7 @@ function GateWatcher() {
     // The ref ensures this only runs once per authenticated session.
     if (!pushRegistrationAttempted.current && user?.id) {
       pushRegistrationAttempted.current = true; // Mark as attempted
+      console.log(`My ID Baby: ${user.id}`)
       registerForPushNotificationsAsync(user.id).catch((e) =>
         console.warn("Push registration failed:", e)
       );

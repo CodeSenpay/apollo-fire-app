@@ -2,7 +2,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 // Configure your API base URL here
-const DEFAULT_API_BASE_URL = "http://localhost:3000/api";
+const DEFAULT_API_BASE_URL = "http://192.168.1.104:3000/api";
 const API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL || DEFAULT_API_BASE_URL).replace(/\/+$/, "");
 
 const buildApiUrl = (path: string) => {
@@ -160,7 +160,7 @@ export const loginAsGuest = async (): Promise<AuthResponse> => {
   }
   
   // Only register a new user if none exists
-  console.log('No existing user found, registering new guest user');
+
   const response = await axios.get(buildApiUrl('/users/register-user-id'));
   
   await setUserData({id:response.data.userId, email:"guest@gmail.com", name:"guest" });
@@ -169,8 +169,12 @@ export const loginAsGuest = async (): Promise<AuthResponse> => {
 };
 
 export const logout = async (): Promise<void> => {
+  const existingUser = await getUserData();
+  
   try {
-    await apiRequest('/auth/logout', { method: 'POST' });
+    const response =  await axios.post(buildApiUrl('/users/logout-user'), { userId: existingUser?.id }, {headers: { 'Content-Type': 'application/json' } });
+  
+    console.log(response.data);
   } catch (error) {
     console.error('Logout API call failed:', error);
   } finally {
