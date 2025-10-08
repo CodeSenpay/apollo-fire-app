@@ -23,9 +23,9 @@ Notifications.setNotificationHandler({
 });
 
 // Register push notification token with API
-async function registerTokenWithAPI(token: string) {
+async function registerTokenWithAPI(token: string, userId: string) {
   try {
-    await registerPushToken(token);
+    await registerPushToken(token, userId);
     console.log("Successfully registered push notification token with API");
   } catch (error) {
     console.error("Error registering push token with API:", error);
@@ -59,11 +59,12 @@ async function getPushNotificationToken(): Promise<string | null> {
 }
 
 // Main function to coordinate the process (now uses the new API function)
-export async function registerForPushNotificationsAsync() {
+export async function registerForPushNotificationsAsync(userId: string) {
   try {
     const token = await getPushNotificationToken();
+    console.log(`Mao ni ang Token Bai : ${token}`);
     if (token) {
-      await registerTokenWithAPI(token);
+      await registerTokenWithAPI(token, userId);
     }
   } catch (error) {
     console.error(
@@ -77,7 +78,7 @@ export async function registerForPushNotificationsAsync() {
 function GateWatcher() {
   const router = useRouter();
   const pathname = usePathname();
-  const { isAuthenticated, loading, unlocked } = useAuth();
+  const { isAuthenticated, loading, unlocked, user } = useAuth();
   const [pinOn, setPinOn] = useState<boolean | null>(null);
   // 🔔 NEW: Ref to ensure push registration only happens once per session
   const pushRegistrationAttempted = useRef(false);
@@ -106,9 +107,9 @@ function GateWatcher() {
     // 🔔 NEW LOGIC:
     // Once the user is authenticated, attempt to register for push notifications.
     // The ref ensures this only runs once per authenticated session.
-    if (!pushRegistrationAttempted.current) {
+    if (!pushRegistrationAttempted.current && user?.id) {
       pushRegistrationAttempted.current = true; // Mark as attempted
-      registerForPushNotificationsAsync().catch((e) =>
+      registerForPushNotificationsAsync(user.id).catch((e) =>
         console.warn("Push registration failed:", e)
       );
     }

@@ -264,11 +264,15 @@ export const getRelayStreamUrl = async (deviceId: string): Promise<string | null
 };
 
 // Push notification token registration
-export const registerPushToken = async (token: string): Promise<void> => {
+export const registerPushToken = async (token: string, userId: string): Promise<void> => {
+  console.log(JSON.stringify({ token, userId }))
   try {
     await fetch('http://192.168.1.104:3000/api/users/register-token', {
       method: 'POST',
-      body: JSON.stringify({ token }),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ token, userId }),
     });
   } catch (error) {
     console.error('Error registering push token:', error);
