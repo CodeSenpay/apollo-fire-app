@@ -2,7 +2,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 // Configure your API base URL here
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || "http://localhost:3000/api";
+const DEFAULT_API_BASE_URL = "http://localhost:3000/api";
+const API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL || DEFAULT_API_BASE_URL).replace(/\/+$/, "");
+
+const buildApiUrl = (path: string) => {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${API_BASE_URL}${normalizedPath}`;
+};
 
 // Storage keys
 const TOKEN_KEY = '@auth_token';
@@ -155,7 +161,7 @@ export const loginAsGuest = async (): Promise<AuthResponse> => {
   
   // Only register a new user if none exists
   console.log('No existing user found, registering new guest user');
-  const response = await axios.get('http://192.168.1.14:8000/api/users/register-user-id');
+  const response = await axios.get(buildApiUrl('/users/register-user-id'));
   
   await setUserData({id:response.data.userId, email:"guest@gmail.com", name:"guest" });
   
@@ -198,7 +204,7 @@ export const getUserDevices = async (): Promise<string[]> => {
       return [];
     }
     console.log("Fetching devices for user:", user.id);
-    const response = await axios.get(`http://192.168.1.14:8000/api/users/${user.id}/devices`);
+    const response = await axios.get(buildApiUrl(`/users/${user.id}/devices`));
     
     console.log("API Response:", JSON.stringify(response.data, null, 2));
     
@@ -226,7 +232,7 @@ export const getDeviceDetails = async (deviceId: string): Promise<any> => {
 
 export const getDeviceReadings = async (deviceId: string): Promise<DeviceData | null> => {
   try {
-    const response = await axios.get(`http://192.168.1.14:8000/api/devices/${deviceId}/sensor-data`);
+    const response = await axios.get(buildApiUrl(`/devices/${deviceId}/sensor-data`));
     return response.data;
   } catch (error) {
     console.error('Error fetching device readings:', error);
@@ -240,7 +246,7 @@ export const getDeviceReadings = async (deviceId: string): Promise<DeviceData | 
 
 export const isDeviceAvailableForClaim = async (deviceId: string): Promise<boolean> => {
   try {
-    const response = await axios.get(`http://192.168.1.14:8000/api/users/devices/${deviceId}/available`);
+    const response = await axios.get(buildApiUrl(`/users/devices/${deviceId}/available`));
     return response.data.available === true;
   } catch (error) {
     console.error('Error checking device availability:', error);
@@ -249,7 +255,7 @@ export const isDeviceAvailableForClaim = async (deviceId: string): Promise<boole
 };
 
 export const claimDevice = async (deviceId: string, userId: string): Promise<void> => {
-  await axios.post(`http://192.168.1.14:8000/api/users/devices/${deviceId}/claim`, {
+  await axios.post(buildApiUrl(`/users/devices/${deviceId}/claim`), {
     userId
   });
 };
@@ -275,7 +281,7 @@ export const setStreamMode = async (
   mode: 'local' | 'relay'
 ): Promise<void> => {
   try {
-    await axios.put(`http://192.168.1.14:8000/api/devices/${deviceId}/stream-mode`, {
+    await axios.put(buildApiUrl(`/devices/${deviceId}/stream-mode`), {
       mode
     });
   } catch (error) {
@@ -293,7 +299,7 @@ export const requestStream = async (
   requested: boolean
 ): Promise<void> => {
   try {
-    await axios.put(`http://192.168.1.14:8000/api/devices/${deviceId}/stream-request`, {
+    await axios.put(buildApiUrl(`/devices/${deviceId}/stream-request`), {
       requested
     });
   } catch (error) {
@@ -308,7 +314,7 @@ export const requestStream = async (
 
 export const getRelayStreamUrl = async (deviceId: string): Promise<string | null> => {
   try {
-    const response = await axios.get(`http://192.168.1.14:8000/api/devices/${deviceId}/stream-url`);
+    const response = await axios.get(buildApiUrl(`/devices/${deviceId}/stream-url`));
     return response.data.streamUrl || null;
   } catch (error) {
     console.error('Error getting relay stream URL:', error);
@@ -324,7 +330,7 @@ export const getRelayStreamUrl = async (deviceId: string): Promise<string | null
 export const registerPushToken = async (token: string, userId: string): Promise<void> => {
   console.log(JSON.stringify({ token, userId }))
   try {
-    await fetch('http://192.168.1.14:8000/api/users/register-token', {
+    await fetch(buildApiUrl('/users/register-token'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
