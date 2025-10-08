@@ -16,8 +16,9 @@ export interface User {
 }
 
 export interface AuthResponse {
-  token: string;
-  user: User;
+
+  success: boolean;
+  userId: string; 
 }
 
 export interface DeviceData {
@@ -145,11 +146,10 @@ export const signUpWithEmail = async (
 };
 
 export const loginAsGuest = async (): Promise<AuthResponse> => {
-  console.log("Praise");
-  const response = await axios.get('http://localhost:3000/api/auth/guest-login', {headers: {"Content-Type": 'application/json'}});
-  console.log("Check Mic");
-  // await setAuthToken(response.data.token);
-  // await setUserData(response.data.user);
+  
+  const response = await axios.get('http://192.168.1.104:3000/api/users/register-user-id');
+  
+  await setUserData({id:response.data.userId, email:"guest@gmail.com", name:"guest" });
   
   return response.data;
 };
@@ -266,7 +266,7 @@ export const getRelayStreamUrl = async (deviceId: string): Promise<string | null
 // Push notification token registration
 export const registerPushToken = async (token: string): Promise<void> => {
   try {
-    await apiRequest('/notifications/register', {
+    await fetch('http://192.168.1.104:3000/api/users/register-token', {
       method: 'POST',
       body: JSON.stringify({ token }),
     });

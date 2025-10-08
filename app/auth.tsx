@@ -11,12 +11,15 @@ export default function AuthScreen() {
   const { setUser } = useAuth();
 
   const handleGuestLogin = async () => {
-    console.log("Mic Check 123...");
+    
     setLoading(true);
     try {
       const response = await loginAsGuest();
-      console.log(response);
-      setUser(response.user);
+      
+        console.log("Success Tayo!")
+        setUser({id:response.userId, email:"guest@gmail.com", name:"guest" });
+        
+
     } catch (e: any) {
       Alert.alert("Guest Login Error", e.message);
     }
@@ -31,7 +34,7 @@ export default function AuthScreen() {
     setLoading(true);
     try {
       const response = await loginWithEmail(email, password);
-      setUser(response.user);
+      
     } catch (e: any) {
       Alert.alert("Login Error", e.message);
     }
@@ -46,7 +49,7 @@ export default function AuthScreen() {
     setLoading(true);
     try {
       const response = await signUpWithEmail(email, password);
-      setUser(response.user);
+      
     } catch (e: any) {
       Alert.alert("Sign Up Error", e.message);
     }

@@ -41,6 +41,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         // First check local storage
         const storedUser = await getUserData();
+        console.log(`Stored User: ${storedUser?.id}`);
         if (storedUser) {
           setUser(storedUser);
           // Optionally verify with API
