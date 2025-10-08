@@ -188,15 +188,15 @@ export default function DeviceDetailScreen() {
   }, [currentMode, getStreamUrl]);
 
   // --- Optimized frame timing and buffer refs ---
-  const [frameRate, setFrameRate] = useState(3); // Start with low frame rate for stability
+  const [frameRate, setFrameRate] = useState(10); // Optimized frame rate
   const FRAME_INTERVAL = Math.round(1000 / frameRate);
 
-  // Quality-based frame rate adjustment - conservative to prevent ESP32 overflow
+  // Quality-based frame rate adjustment - optimized for ESP32 output
   useEffect(() => {
     const qualitySettings = {
-      low: 2, // Low - 2 FPS
-      medium: 3, // Medium - 3 FPS
-      high: 5, // High - 5 FPS
+      low: 5, // Low - 5 FPS
+      medium: 10, // Medium - 10 FPS (matches ESP32)
+      high: 12, // High - 12 FPS
     };
     setFrameRate(qualitySettings[streamQuality]);
   }, [streamQuality]);
@@ -215,12 +215,12 @@ export default function DeviceDetailScreen() {
   const messageQueueRef = useRef<ArrayBuffer[]>([]);
   const processingMessageRef = useRef(false);
   const lastProcessedMessageRef = useRef<number>(0);
-  const maxQueueSize = 2; // Allow small buffer for smooth playback
+  const maxQueueSize = 5; // Larger buffer for smoother playback
   const frameProcessingTimeoutRef = useRef<ReturnType<
     typeof setTimeout
   > | null>(null);
 
-  // Throttled message processing to prevent ESP32 overflow
+  // Optimized message processing for smooth playback
   const processMessageQueue = useCallback(async () => {
     if (processingMessageRef.current || messageQueueRef.current.length === 0) {
       return;
@@ -229,9 +229,9 @@ export default function DeviceDetailScreen() {
     const now = Date.now();
     const timeSinceLastProcess = now - lastProcessedMessageRef.current;
 
-    // Respect frame rate throttling
-    if (timeSinceLastProcess < FRAME_INTERVAL) {
-      const delay = FRAME_INTERVAL - timeSinceLastProcess;
+    // Minimal throttling - process frames as they arrive
+    if (timeSinceLastProcess < FRAME_INTERVAL * 0.8) {
+      const delay = Math.max(10, FRAME_INTERVAL * 0.8 - timeSinceLastProcess);
       frameProcessingTimeoutRef.current = setTimeout(
         processMessageQueue,
         delay
@@ -241,11 +241,14 @@ export default function DeviceDetailScreen() {
 
     processingMessageRef.current = true;
 
-    // Process the latest message, keep queue small
-    const latestMessage = messageQueueRef.current.pop();
-    if (messageQueueRef.current.length > 1) {
-      messageQueueRef.current = messageQueueRef.current.slice(-1); // Keep only latest
-      performanceRef.current.droppedFrames++;
+    // Process the latest message, drop older frames if queue is large
+    const latestMessage = messageQueueRef.current.shift();
+    if (messageQueueRef.current.length > 2) {
+      // Drop middle frames, keep latest
+      const latest = messageQueueRef.current.pop();
+      const dropped = messageQueueRef.current.length;
+      messageQueueRef.current = latest ? [latest] : [];
+      performanceRef.current.droppedFrames += dropped;
     }
 
     if (latestMessage) {
@@ -277,7 +280,7 @@ export default function DeviceDetailScreen() {
     if (messageQueueRef.current.length > 0) {
       frameProcessingTimeoutRef.current = setTimeout(
         processMessageQueue,
-        FRAME_INTERVAL
+        10 // Process next frame quickly
       );
     }
   }, [FRAME_INTERVAL]);
@@ -443,10 +446,10 @@ export default function DeviceDetailScreen() {
           const now = Date.now();
           frameCountRef.current++;
 
-          // Add message to queue for throttled processing
+          // Add message to queue for processing
           const messageData = event.data as ArrayBuffer;
 
-          // Drop oldest messages if queue is too large to prevent memory buildup
+          // Drop oldest messages if queue is full
           if (messageQueueRef.current.length >= maxQueueSize) {
             messageQueueRef.current.shift(); // Remove oldest
             performanceRef.current.droppedFrames++;
@@ -455,9 +458,9 @@ export default function DeviceDetailScreen() {
           // Add new message to queue
           messageQueueRef.current.push(messageData);
 
-          // Trigger processing if not already running
+          // Trigger processing immediately if not already running
           if (!processingMessageRef.current) {
-            setTimeout(processMessageQueue, 0);
+            processMessageQueue();
           }
         } catch (error) {
           console.error("Error queuing frame:", error);
@@ -481,6 +484,7 @@ export default function DeviceDetailScreen() {
               method: "GET",
               headers: {
                 "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
               },
             });
 
@@ -509,7 +513,7 @@ export default function DeviceDetailScreen() {
             console.error("HTTP polling error:", error);
             setStreamError("Failed to fetch relay stream");
           }
-        }, FRAME_INTERVAL); // Poll at throttled frame rate
+        }, Math.max(FRAME_INTERVAL, 100)); // Poll at frame rate, minimum 100ms
       };
 
       startHttpPolling();
