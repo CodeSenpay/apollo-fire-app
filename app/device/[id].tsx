@@ -1,28 +1,28 @@
 import {
-    getDeviceReadings,
-    getRelayStreamUrl,
-    requestStream,
-    setStreamMode,
+  getDeviceReadings,
+  getRelayStreamUrl,
+  requestStream,
+  setStreamMode,
 } from "@/src/services/apiConfig";
 import Ionicons from "@expo/vector-icons/build/Ionicons";
 import { Link, useLocalSearchParams, useNavigation } from "expo-router";
 import React, {
-    useCallback,
-    useEffect,
-    useLayoutEffect,
-    useRef,
-    useState,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
 } from "react";
 import {
-    ActivityIndicator,
-    Dimensions,
-    Image,
-    Pressable,
-    SafeAreaView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Dimensions,
+  Image,
+  Pressable,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 
 // Helper function to convert raw binary data to a base64 string
@@ -38,7 +38,6 @@ function arrayBufferToBase64(buffer: ArrayBuffer) {
 
 // --- Types ---
 type Readings = {
-  temperature: number | "N/A";
   gasValue: number | "N/A";
   isFlameDetected: boolean;
   isCriticalAlert: boolean;
@@ -69,7 +68,6 @@ export default function DeviceDetailScreen() {
   const [streamError, setStreamError] = useState<string | null>(null);
   const [currentMode, setCurrentMode] = useState<"local" | "relay">("relay");
   const [readings, setReadings] = useState<Readings>({
-    temperature: "N/A",
     gasValue: "N/A",
     isFlameDetected: false,
     isCriticalAlert: false,
@@ -142,8 +140,6 @@ export default function DeviceDetailScreen() {
         const data = await getDeviceReadings(deviceId);
         if (data) {
           setReadings({
-            temperature:
-              typeof data.temperature === "number" ? data.temperature : "N/A",
             gasValue: typeof data.gasValue === "number" ? data.gasValue : "N/A",
             isFlameDetected: !!data.isFlameDetected,
             isCriticalAlert: !!data.isCriticalAlert,
@@ -771,19 +767,6 @@ export default function DeviceDetailScreen() {
         </TouchableOpacity>
       </View>
       <View style={styles.card}>
-        <View style={styles.row}>
-          <Text style={styles.stat}>🌡️ Temperature:</Text>
-          <Text
-            style={[
-              styles.value,
-              typeof readings.temperature === "number" &&
-                readings.temperature > 45 &&
-                styles.alert,
-            ]}
-          >
-            {readings.temperature}°C
-          </Text>
-        </View>
         <View style={styles.row}>
           <Text style={styles.stat}>💨 Gas Level:</Text>
           <Text

@@ -44,12 +44,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.log(`Stored User: ${storedUser?.id}`);
         if (storedUser) {
           setUser(storedUser);
-          // Optionally verify with API
-          const currentUser = await getCurrentUser();
-          if (currentUser) {
-            setUser(currentUser);
-          } else {
-            setUser(null);
+          // Only verify with API if user has an email (not a guest)
+          // Guest users have email "guest@gmail.com" and no auth token
+          if (storedUser.email !== "guest@gmail.com") {
+            const currentUser = await getCurrentUser();
+            if (currentUser) {
+              setUser(currentUser);
+            } else {
+              setUser(null);
+            }
           }
         }
       } catch (error) {

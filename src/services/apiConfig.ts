@@ -22,7 +22,6 @@ export interface AuthResponse {
 }
 
 export interface DeviceData {
-  temperature: number;
   gasValue: number;
   isFlameDetected: number;
   isCriticalAlert: number;
@@ -146,7 +145,16 @@ export const signUpWithEmail = async (
 };
 
 export const loginAsGuest = async (): Promise<AuthResponse> => {
+  // Check if user already exists in local storage
+  const existingUser = await getUserData();
   
+  if (existingUser && existingUser.id) {
+    console.log('Existing guest user found:', existingUser.id);
+    return { success: true, userId: existingUser.id };
+  }
+  
+  // Only register a new user if none exists
+  console.log('No existing user found, registering new guest user');
   const response = await axios.get('http://192.168.1.14:8000/api/users/register-user-id');
   
   await setUserData({id:response.data.userId, email:"guest@gmail.com", name:"guest" });
@@ -218,9 +226,14 @@ export const getDeviceDetails = async (deviceId: string): Promise<any> => {
 
 export const getDeviceReadings = async (deviceId: string): Promise<DeviceData | null> => {
   try {
-    return await apiRequest(`/devices/${deviceId}/readings`);
+    const response = await axios.get(`http://192.168.1.14:8000/api/devices/${deviceId}/sensor-data`);
+    return response.data;
   } catch (error) {
     console.error('Error fetching device readings:', error);
+    if (axios.isAxiosError(error)) {
+      console.error('Response data:', error.response?.data);
+      console.error('Response status:', error.response?.status);
+    }
     return null;
   }
 };
@@ -279,10 +292,14 @@ export const requestStream = async (
 
 export const getRelayStreamUrl = async (deviceId: string): Promise<string | null> => {
   try {
-    const data = await apiRequest(`/devices/${deviceId}/relay-stream`);
-    return data.streamUrl || null;
+    const response = await axios.get(`http://192.168.1.14:8000/api/devices/${deviceId}/stream-url`);
+    return response.data.streamUrl || null;
   } catch (error) {
     console.error('Error getting relay stream URL:', error);
+    if (axios.isAxiosError(error)) {
+      console.error('Response data:', error.response?.data);
+      console.error('Response status:', error.response?.status);
+    }
     return null;
   }
 };
