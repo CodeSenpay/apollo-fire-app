@@ -276,6 +276,16 @@ export const getDeviceThresholds = async (
   return apiRequest(`/devices/${deviceId}/thresholds`);
 };
 
+export const resetDevice = async (
+  deviceId: string,
+  userId: string
+): Promise<void> => {
+  await apiRequest(`/devices/${deviceId}/reset`, {
+    method: 'POST',
+    body: JSON.stringify({ userId }),
+  });
+};
+
 export const setStreamMode = async (
   deviceId: string,
   mode: 'local' | 'relay'

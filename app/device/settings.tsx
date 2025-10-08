@@ -1,5 +1,5 @@
 // app/device/settings.tsx
-import { getDeviceThresholds, updateDeviceThresholds } from '@/src/services/apiConfig';
+import { getDeviceThresholds, updateDeviceThresholds, resetDevice, getUserData } from '@/src/services/apiConfig';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -11,6 +11,7 @@ export default function DeviceSettingsScreen() {
   const [gasThreshold, setGasThreshold] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   // Fetch current thresholds from API when the screen loads
   useEffect(() => {
@@ -56,6 +57,41 @@ export default function DeviceSettingsScreen() {
     }
   };
 
+  const handleResetPress = () => {
+    if (!deviceId || resetting) return;
+
+    Alert.alert(
+      'Reset Device',
+      'This will remove this device from your account and restore default settings so it can be claimed by another user. Continue?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: async () => {
+            setResetting(true);
+            try {
+              const user = await getUserData();
+              if (!user?.id) {
+                Alert.alert('Error', 'User information is missing. Please log in again.');
+                return;
+              }
+
+              await resetDevice(deviceId, user.id);
+              Alert.alert('Device Reset', 'The device has been reset and is ready for transfer.', [
+                { text: 'OK', onPress: () => router.back() },
+              ]);
+            } catch (error) {
+              Alert.alert('Error', 'Failed to reset the device. Please try again.');
+            } finally {
+              setResetting(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   if (loading) {
     return (
       <View style={styles.centered}>
@@ -84,11 +120,19 @@ export default function DeviceSettingsScreen() {
         </View>
 
         <TouchableOpacity
-          style={[styles.button, saving && styles.buttonDisabled]}
+          style={[styles.button, (saving || resetting) && styles.buttonDisabled]}
           onPress={handleSave}
-          disabled={saving}
+          disabled={saving || resetting}
         >
           <Text style={styles.buttonText}>{saving ? 'Saving...' : 'Save Changes'}</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.resetButton, resetting && styles.resetButtonDisabled]}
+          onPress={handleResetPress}
+          disabled={resetting || saving}
+        >
+          <Text style={styles.resetButtonText}>{resetting ? 'Resetting...' : 'Reset Device'}</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -148,6 +192,24 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     color: 'white',
+    fontWeight: '600',
+    fontSize: 16,
+  },
+  resetButton: {
+    marginTop: 12,
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#ef4444',
+    backgroundColor: 'white',
+  },
+  resetButtonDisabled: {
+    borderColor: '#FECACA',
+    backgroundColor: '#F9FAFB',
+  },
+  resetButtonText: {
+    color: '#ef4444',
     fontWeight: '600',
     fontSize: 16,
   },
