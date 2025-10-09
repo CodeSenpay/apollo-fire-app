@@ -4,6 +4,11 @@ import {
   requestStream,
   setStreamMode,
 } from "@/src/services/apiConfig";
+import {
+  connectSocket,
+  subscribeToDevice,
+  unsubscribeFromDevice,
+} from "@/src/state/socket";
 import Ionicons from "@expo/vector-icons/build/Ionicons";
 import { Link, useLocalSearchParams, useNavigation } from "expo-router";
 import React, {
@@ -44,6 +49,8 @@ type Readings = {
   lastUpdate: number | "N/A";
 };
 
+const FALLBACK_POLL_INTERVAL_MS = 60000; // 1 minute sanity check alongside realtime socket updates
+
 // --- Main Component ---
 // Replace the existing DeviceDetailScreen component with this version
 export default function DeviceDetailScreen() {
@@ -77,6 +84,8 @@ export default function DeviceDetailScreen() {
   const [streamQuality, setStreamQuality] = useState<"low" | "medium" | "high">(
     "medium"
   );
+  const latestReadingRef = useRef<number | null>(null);
+
   const httpPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useLayoutEffect(() => {
@@ -130,7 +139,7 @@ export default function DeviceDetailScreen() {
 
     requestStream(deviceId, true);
 
-    // Poll device readings from API every 3 seconds
+    // Poll device readings from API as a fallback sanity check
     const pollReadings = async () => {
       try {
         const data = await getDeviceReadings(deviceId);
@@ -151,8 +160,11 @@ export default function DeviceDetailScreen() {
     // Initial fetch
     pollReadings();
 
-    // Poll every 3 seconds
-    const readingsInterval = setInterval(pollReadings, 3000);
+    // Poll periodically in case socket events are missed
+    const readingsInterval = setInterval(
+      pollReadings,
+      FALLBACK_POLL_INTERVAL_MS
+    );
 
     return () => {
       clearInterval(readingsInterval);
@@ -186,6 +198,50 @@ export default function DeviceDetailScreen() {
   useEffect(() => {
     getStreamUrl(currentMode);
   }, [currentMode, getStreamUrl]);
+
+  useEffect(() => {
+    if (!deviceId) return;
+    let cancelled = false;
+
+    const attachSocket = async () => {
+      await connectSocket();
+      if (cancelled) return;
+      subscribeToDevice(deviceId, {
+        sensorData: (payload) => {
+          latestReadingRef.current = payload.timestamp || Date.now();
+          setReadings({
+            gasValue:
+              typeof payload.gasValue === "number" ? payload.gasValue : "N/A",
+            isFlameDetected: Boolean(payload.isFlameDetected),
+            isCriticalAlert: Boolean(payload.isCriticalAlert),
+            lastUpdate: latestReadingRef.current,
+          });
+        },
+        streamMode: ({ mode }) => {
+          setCurrentMode(mode);
+        },
+        streamUrl: ({ streamUrl: nextUrl }) => {
+          setStreamUrl(nextUrl || null);
+          setIsLoading(false);
+        },
+        streamStatus: ({ status }) => {
+          if (status === "active") {
+            setStreamError(null);
+          }
+        },
+        mlAlert: (payload) => {
+          console.log("Realtime ML alert", payload);
+        },
+      });
+    };
+
+    attachSocket();
+
+    return () => {
+      cancelled = true;
+      unsubscribeFromDevice(deviceId);
+    };
+  }, [deviceId]);
 
   // --- Optimized frame timing and buffer refs ---
   const [frameRate, setFrameRate] = useState(10); // Optimized frame rate
