@@ -170,16 +170,30 @@ export const loginAsGuest = async (): Promise<AuthResponse> => {
 
 export const logout = async (): Promise<void> => {
   const existingUser = await getUserData();
-  
+
+  if (!existingUser?.id) {
+    console.warn('Logout requested but no user ID found in storage.');
+    await removeAuthToken();
+    return;
+  }
+
   try {
-    const response =  await axios.post(buildApiUrl('/users/logout-user'), { userId: existingUser?.id }, {headers: { 'Content-Type': 'application/json' } });
-  
-    console.log(response.data);
+    const response = await axios.post(
+      buildApiUrl('/users/logout-user'),
+      { userId: existingUser.id },
+      { headers: { 'Content-Type': 'application/json' } }
+    );
+
+    if (!response.data?.success) {
+      throw new Error(response.data?.message || 'Logout failed');
+    }
+
+    console.log('Logout response:', response.data);
   } catch (error) {
     console.error('Logout API call failed:', error);
+    throw error;
   } finally {
     await removeAuthToken();
-    await removeUserData();
   }
 };
 
