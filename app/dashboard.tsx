@@ -5,6 +5,7 @@ import * as React from "react";
 import { Pressable } from "react-native";
 import CameraPage from "./camera";
 import HomePage from "./home";
+import NotificationsPage from "./notifications";
 import ProfilePage from "./profile";
 
 function HomeScreen() {
@@ -18,6 +19,10 @@ function DevicesScreen() {
 
 function MeScreen() {
   return <ProfilePage />;
+}
+
+function NotificationsScreen() {
+  return <NotificationsPage />;
 }
 
 const Tab = createBottomTabNavigator();
@@ -35,6 +40,8 @@ export default function Dashboard() {
               iconName = focused ? "home" : "home-outline";
             } else if (route.name === "Devices") { // Changed from "Camera"
               iconName = focused ? "camera" : "camera-outline";
+            } else if (route.name === "Notifications") {
+              iconName = focused ? "notifications" : "notifications-outline";
             } else if (route.name === "Me") {
               iconName = focused ? "person" : "person-outline";
             }
@@ -67,6 +74,13 @@ export default function Dashboard() {
                 </Pressable>
               </Link>
             ),
+          }}
+        />
+        <Tab.Screen
+          name="Notifications"
+          component={NotificationsScreen}
+          options={{
+            headerShown: false,
           }}
         />
         <Tab.Screen

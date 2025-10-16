@@ -1,4 +1,3 @@
-import Navbar from "@/src/components/navbar";
 import { NotificationHistoryEntry, getNotificationHistory } from "@/src/services/apiConfig";
 import { useFocusEffect } from "@react-navigation/native";
 import { useCallback, useState } from "react";
@@ -50,7 +49,6 @@ export default function NotificationsPage() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <Navbar />
       <View style={styles.container}>
         <Text style={styles.heading}>Notification History</Text>
         {loading && notifications.length === 0 ? (

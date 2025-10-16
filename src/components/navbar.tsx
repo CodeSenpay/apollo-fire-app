@@ -1,15 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
 import React from "react";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 
 export default function Navbar() {
-  const router = useRouter();
-
-  const handleNotification = () => {
-    router.push("/notifications");
-  };
-
   return (
     <View
       style={styles.navbar}
@@ -33,7 +26,7 @@ export default function Navbar() {
               shadowOpacity: pressed ? 0.15 : 0,
             },
           ]}
-          onPress={handleNotification}
+          onPress={() => {}}
         >
           <Ionicons name="notifications-outline" size={23} color="#bd0000" />
         </Pressable>
