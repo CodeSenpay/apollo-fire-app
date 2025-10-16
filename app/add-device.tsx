@@ -29,7 +29,7 @@ const decodeQrCode = (base64: string): string | null => {
 };
 
 
-export default function AddDeviceScreen() {
+export default function LinkDeviceScreen() {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [scanned, setScanned] = useState(false);
   const [isProcessingGallery, setIsProcessingGallery] = useState(false);
@@ -156,7 +156,8 @@ export default function AddDeviceScreen() {
         <View style={styles.layerRight} />
       </View>
       <View style={styles.layerBottom}>
-        <Text style={styles.text}>Scan the QR code on your device</Text>
+        <Text style={styles.text}>Scan your Apollo device QR code</Text>
+
         <TouchableOpacity 
           style={[styles.galleryButton, isProcessingGallery && styles.galleryButtonDisabled]} 
           onPress={handlePickFromGallery}

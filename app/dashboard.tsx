@@ -54,7 +54,7 @@ export default function Dashboard() {
           name="Home"
           component={HomeScreen}
           options={{
-            headerTitle: "My Devices",
+            headerTitle: "Apollo Fire Overview",
             headerShown: true,
             // The button has been removed from here
           }}

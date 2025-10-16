@@ -25,7 +25,7 @@ export default function ProfilePage() {
         <View className="w-80 gap-6 items-center mb-6">
           <MaterialIcons name="account-circle" size={64} color="#3b82f6" />
           <Text className="text-xl font-bold text-gray-800">
-            Robert Mayo Elumba
+            Quinie Gonzaga
           </Text>
         </View>
         <View className="w-80 gap-3">
