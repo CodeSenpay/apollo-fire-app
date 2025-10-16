@@ -7,7 +7,7 @@ export default function Navbar() {
   const router = useRouter();
 
   const handleNotification = () => {
-    router.push("/");
+    router.push("/notifications");
   };
 
   return (

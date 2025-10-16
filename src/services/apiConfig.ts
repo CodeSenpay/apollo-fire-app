@@ -244,6 +244,42 @@ export const getUserDevices = async (): Promise<string[]> => {
   }
 };
 
+export interface NotificationHistoryEntry {
+  id: number;
+  deviceId: string | null;
+  title: string | null;
+  body: string | null;
+  notificationType: string | null;
+  sentAt: string;
+}
+
+export const getNotificationHistory = async (limit = 100): Promise<NotificationHistoryEntry[]> => {
+  try {
+    const user = await getUserData();
+    if (!user) {
+      console.error('No user found');
+      return [];
+    }
+
+    const response = await axios.get(buildApiUrl(`/users/${user.id}/notifications`), {
+      params: { limit }
+    });
+
+    if (response.data.success && Array.isArray(response.data.notifications)) {
+      return response.data.notifications as NotificationHistoryEntry[];
+    }
+
+    return [];
+  } catch (error) {
+    console.error('Error fetching notification history:', error);
+    if (axios.isAxiosError(error)) {
+      console.error('Response data:', error.response?.data);
+      console.error('Response status:', error.response?.status);
+    }
+    return [];
+  }
+};
+
 export const getDeviceDetails = async (deviceId: string): Promise<any> => {
   return apiRequest(`/devices/${deviceId}/details`);
 };
