@@ -47,6 +47,22 @@ let socket: Socket | null = null;
 let connecting = false;
 const activeSubscriptions = new Map<string, Partial<DeviceEventMap>>();
 
+export type NotificationPayload = {
+  id: number | null;
+  userId: string | null;
+  deviceId: string | null;
+  title: string | null;
+  body: string | null;
+  notificationType: string | null;
+  sentAt: string;
+};
+
+type NotificationHandler = (payload: NotificationPayload) => void;
+
+const notificationHandlers = new Set<NotificationHandler>();
+let notificationListener: ((payload: NotificationPayload) => void) | null = null;
+let subscribedUserId: string | null = null;
+
 type ListenerEntry = {
   event: DeviceEvents;
   listener: (...args: any[]) => void;
@@ -112,6 +128,11 @@ export const connectSocket = async () => {
 
   socket.on("connect", () => {
     connecting = false;
+    if (user?.id) {
+      subscribedUserId = user.id;
+      socket?.emit("subscribeToUser", user.id);
+    }
+    ensureNotificationListener();
     activeSubscriptions.forEach((handlers, deviceId) => {
       performSubscription(deviceId, handlers);
     });
@@ -120,6 +141,7 @@ export const connectSocket = async () => {
   socket.on("disconnect", () => {
     connecting = false;
     deviceListeners.clear();
+    notificationListener = null;
   });
 
   socket.on("connect_error", (error: Error) => {
@@ -138,10 +160,16 @@ export const disconnectSocket = () => {
     });
   });
   deviceListeners.clear();
+  if (notificationListener) {
+    socket.off("notification", notificationListener);
+    notificationListener = null;
+  }
   socket.disconnect();
   socket = null;
   connecting = false;
   activeSubscriptions.clear();
+  notificationHandlers.clear();
+  subscribedUserId = null;
 };
 
 const performSubscription = (
@@ -180,4 +208,65 @@ export const unsubscribeFromDevice = (deviceId: string) => {
   socket.emit("unsubscribeFromDevice", deviceId);
   detachListeners(deviceId);
   activeSubscriptions.delete(deviceId);
+};
+
+const ensureNotificationListener = () => {
+  if (!socket || notificationListener) return;
+
+  const listener = (payload: NotificationPayload) => {
+    notificationHandlers.forEach((handler) => {
+      try {
+        handler(payload);
+      } catch (error) {
+        console.warn("Notification handler error:", error);
+      }
+    });
+  };
+
+  socket.on("notification", listener);
+  notificationListener = listener;
+};
+
+export const subscribeToNotifications = async (handler: NotificationHandler) => {
+  if (notificationHandlers.has(handler)) {
+    return;
+  }
+
+  notificationHandlers.add(handler);
+
+  const activeSocket = socket;
+
+  if (activeSocket && activeSocket.connected) {
+    ensureNotificationListener();
+
+    if (!subscribedUserId) {
+      const user = await getUserData();
+      if (user?.id) {
+        subscribedUserId = user.id;
+        activeSocket.emit("subscribeToUser", user.id);
+      }
+    }
+
+    return;
+  }
+
+  await connectSocket();
+  ensureNotificationListener();
+
+  if (socket?.connected && !subscribedUserId) {
+    const user = await getUserData();
+    if (user?.id) {
+      subscribedUserId = user.id;
+      socket.emit("subscribeToUser", user.id);
+    }
+  }
+};
+
+export const unsubscribeFromNotifications = (handler: NotificationHandler) => {
+  notificationHandlers.delete(handler);
+
+  if (notificationHandlers.size === 0 && socket && notificationListener) {
+    socket.off("notification", notificationListener);
+    notificationListener = null;
+  }
 };
