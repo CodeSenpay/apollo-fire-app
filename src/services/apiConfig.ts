@@ -27,13 +27,6 @@ export interface AuthResponse {
   userId: string; 
 }
 
-export interface DeviceData {
-  gasValue: number;
-  isFlameDetected: number;
-  isCriticalAlert: number;
-  lastUpdate: number;
-}
-
 // Auth token management
 export const getAuthToken = async (): Promise<string | null> => {
   try {
@@ -284,20 +277,6 @@ export const getDeviceDetails = async (deviceId: string): Promise<any> => {
   return apiRequest(`/devices/${deviceId}/details`);
 };
 
-export const getDeviceReadings = async (deviceId: string): Promise<DeviceData | null> => {
-  try {
-    const response = await axios.get(buildApiUrl(`/devices/${deviceId}/sensor-data`));
-    return response.data;
-  } catch (error) {
-    console.error('Error fetching device readings:', error);
-    if (axios.isAxiosError(error)) {
-      console.error('Response data:', error.response?.data);
-      console.error('Response status:', error.response?.status);
-    }
-    return null;
-  }
-};
-
 export const isDeviceAvailableForClaim = async (deviceId: string): Promise<boolean> => {
   try {
     const response = await axios.get(buildApiUrl(`/users/devices/${deviceId}/available`));
@@ -312,22 +291,6 @@ export const claimDevice = async (deviceId: string, userId: string): Promise<voi
   await axios.post(buildApiUrl(`/users/devices/${deviceId}/claim`), {
     userId
   });
-};
-
-export const updateDeviceThresholds = async (
-  deviceId: string,
-  gasThreshold: number
-): Promise<void> => {
-  await apiRequest(`/devices/${deviceId}/thresholds`, {
-    method: 'PUT',
-    body: JSON.stringify({ gas: gasThreshold }),
-  });
-};
-
-export const getDeviceThresholds = async (
-  deviceId: string
-): Promise<{ gas: number }> => {
-  return apiRequest(`/devices/${deviceId}/thresholds`);
 };
 
 export const resetDevice = async (

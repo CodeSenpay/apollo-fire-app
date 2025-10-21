@@ -135,6 +135,7 @@ function GateWatcher() {
 export default function RootLayout() {
   const notificationListener = useRef<Notifications.Subscription | null>(null);
   const responseListener = useRef<Notifications.Subscription | null>(null);
+  const router = useRouter();
 
   useNotifications();
 
@@ -160,13 +161,24 @@ export default function RootLayout() {
     responseListener.current =
       Notifications.addNotificationResponseReceivedListener((response) => {
         console.log("Notification tapped:", response);
+        try {
+          const data = response.notification.request.content
+            .data as Record<string, unknown>;
+          const deviceId = typeof data?.deviceId === "string" ? data.deviceId : null;
+
+          if (deviceId) {
+            router.push({ pathname: "/device/[id]", params: { id: deviceId } });
+          }
+        } catch (error) {
+          console.warn("Failed to handle notification response:", error);
+        }
       });
 
     return () => {
       if (notificationListener.current) notificationListener.current.remove();
       if (responseListener.current) responseListener.current.remove();
     };
-  }, []);
+  }, [router]);
 
   return (
     <AuthProvider>

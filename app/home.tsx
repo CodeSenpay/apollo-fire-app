@@ -1,14 +1,12 @@
 import {
-  DeviceData,
   NotificationHistoryEntry,
-  getDeviceReadings,
   getNotificationHistory,
   getUserDevices,
 } from "@/src/services/apiConfig";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { useRouter } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   RefreshControl,
@@ -18,11 +16,6 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-
-interface DeviceStatus {
-  id: string;
-  data: DeviceData | null;
-}
 
 interface QuickActionButtonProps {
   icon: keyof typeof Ionicons.glyphMap;
@@ -46,7 +39,6 @@ export default function HomePage() {
   const navigation = useNavigation<any>();
 
   const [deviceIds, setDeviceIds] = useState<string[]>([]);
-  const [deviceStatuses, setDeviceStatuses] = useState<DeviceStatus[]>([]);
   const [notifications, setNotifications] = useState<NotificationHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -55,19 +47,6 @@ export default function HomePage() {
     try {
       const ids = await getUserDevices();
       setDeviceIds(ids);
-
-      const readings = await Promise.all(
-        ids.map(async (id) => {
-          try {
-            const data = await getDeviceReadings(id);
-            return { id, data } as DeviceStatus;
-          } catch (error) {
-            console.error(`Error fetching readings for device ${id}:`, error);
-            return { id, data: null } as DeviceStatus;
-          }
-        })
-      );
-      setDeviceStatuses(readings);
 
       const recentNotifications = await getNotificationHistory(3);
       setNotifications(recentNotifications);
@@ -102,24 +81,7 @@ export default function HomePage() {
     setRefreshing(false);
   }, [loadData]);
 
-  const criticalDevices = useMemo(
-    () =>
-      deviceStatuses.filter((status) => Boolean(status.data?.isCriticalAlert)).length,
-    [deviceStatuses]
-  );
-
-  const averageGasValue = useMemo(() => {
-    const gasValues = deviceStatuses
-      .map((status) => status.data?.gasValue)
-      .filter((value): value is number => typeof value === "number");
-
-    if (!gasValues.length) {
-      return null;
-    }
-
-    const total = gasValues.reduce((sum, value) => sum + value, 0);
-    return Math.round(total / gasValues.length);
-  }, [deviceStatuses]);
+  const criticalDevices = 0;
 
   return (
     <View style={styles.container}>
@@ -156,8 +118,8 @@ export default function HomePage() {
               <Text style={styles.summaryLabel}>Critical Alerts</Text>
             </View>
             <View style={styles.summaryItem}>
-              <Text style={styles.summaryValue}>{averageGasValue ?? "--"}</Text>
-              <Text style={styles.summaryLabel}>Avg. Gas Level</Text>
+              <Text style={styles.summaryValue}>--</Text>
+              <Text style={styles.summaryLabel}>Cam Streams</Text>
             </View>
           </View>
           {loading && (
@@ -177,47 +139,25 @@ export default function HomePage() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Device Status</Text>
+          <Text style={styles.sectionTitle}>Registered Devices</Text>
           {deviceIds.length === 0 && !loading ? (
             <View style={styles.emptyCard}>
               <Text style={styles.emptyTitle}>No devices claimed yet</Text>
               <Text style={styles.emptySubtitle}>
-                Link your Apollo hardware to start receiving telemetry and safety alerts.
+                Link your Apollo hardware to start streaming camera feeds.
               </Text>
             </View>
           ) : (
-            deviceStatuses.map((status) => (
-              <View key={status.id} style={styles.deviceCard}>
+            deviceIds.map((id) => (
+              <View key={id} style={styles.deviceCard}>
                 <View style={styles.deviceCardHeader}>
-                  <Text style={styles.deviceCardTitle}>{status.id}</Text>
-                  <Text
-                    style={[
-                      styles.deviceCardBadge,
-                      status.data?.isCriticalAlert ? styles.deviceCardBadgeCritical : undefined,
-                    ]}
-                  >
-                    {status.data?.isCriticalAlert ? "Critical" : "Stable"}
-                  </Text>
+                  <Text style={styles.deviceCardTitle}>{id}</Text>
+                  <Text style={styles.deviceCardBadge}>Streaming Ready</Text>
                 </View>
-                <View style={styles.deviceMetricsRow}>
-                  <View style={styles.deviceMetric}>
-                    <Text style={styles.metricLabel}>Gas Value</Text>
-                    <Text style={styles.metricValue}>{status.data?.gasValue ?? "--"}</Text>
-                  </View>
-                  <View style={styles.deviceMetric}>
-                    <Text style={styles.metricLabel}>Flame</Text>
-                    <Text style={styles.metricValue}>
-                      {status.data?.isFlameDetected ? "Detected" : "Normal"}
-                    </Text>
-                  </View>
-                  <View style={styles.deviceMetric}>
-                    <Text style={styles.metricLabel}>Updated</Text>
-                    <Text style={styles.metricValue}>
-                      {status.data?.lastUpdate
-                        ? new Date(status.data.lastUpdate).toLocaleTimeString()
-                        : "--"}
-                    </Text>
-                  </View>
+                <View style={styles.deviceDescriptionWrapper}>
+                  <Text style={styles.deviceDescription}>
+                    Tap the device to open its live camera stream and manage connection mode.
+                  </Text>
                 </View>
               </View>
             ))
@@ -456,37 +396,21 @@ const styles = StyleSheet.create({
     color: "#b91c1c",
     backgroundColor: "rgba(220,38,38,0.12)",
   },
-  deviceMetricsRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  deviceMetric: {
-    flex: 1,
+  deviceDescriptionWrapper: {
+    marginTop: 10,
     backgroundColor: "#ffffff",
     borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 10,
+    padding: 14,
     shadowColor: "#0f172a",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.04,
     shadowRadius: 8,
     elevation: 1,
-    gap: 6,
-    alignItems: "center",
   },
-  metricLabel: {
-    fontSize: 12,
-    color: "#6b7280",
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
-    textAlign: "center",
-  },
-  metricValue: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#0f172a",
-    textAlign: "center",
+  deviceDescription: {
+    fontSize: 13,
+    color: "#4b5563",
+    lineHeight: 18,
   },
   notificationCard: {
     backgroundColor: "#f9fafb",

@@ -1,20 +1,13 @@
-import {
-  getDeviceReadings,
-  getRelayStreamUrl,
-  requestStream,
-  setStreamMode,
-} from "@/src/services/apiConfig";
+import { getRelayStreamUrl, requestStream, setStreamMode } from "@/src/services/apiConfig";
 import {
   connectSocket,
   subscribeToDevice,
   unsubscribeFromDevice,
 } from "@/src/state/socket";
-import Ionicons from "@expo/vector-icons/build/Ionicons";
 import { Link, useLocalSearchParams, useNavigation } from "expo-router";
 import React, {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -29,6 +22,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 
 // Helper function to convert raw binary data to a base64 string
 function arrayBufferToBase64(buffer: ArrayBuffer) {
@@ -42,15 +36,6 @@ function arrayBufferToBase64(buffer: ArrayBuffer) {
 }
 
 // --- Types ---
-type Readings = {
-  gasValue: number | "N/A";
-  isFlameDetected: boolean;
-  isCriticalAlert: boolean;
-  lastUpdate: number | "N/A";
-};
-
-const FALLBACK_POLL_INTERVAL_MS = 60000; // 1 minute sanity check alongside realtime socket updates
-
 // --- Main Component ---
 // Replace the existing DeviceDetailScreen component with this version
 export default function DeviceDetailScreen() {
@@ -74,33 +59,27 @@ export default function DeviceDetailScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [currentMode, setCurrentMode] = useState<"local" | "relay">("local");
-  const [readings, setReadings] = useState<Readings>({
-    gasValue: "N/A",
-    isFlameDetected: false,
-    isCriticalAlert: false,
-    lastUpdate: "N/A",
-  });
   const [showPerformance, setShowPerformance] = useState(false);
   const [streamQuality, setStreamQuality] = useState<"low" | "medium" | "high">(
     "medium"
   );
-  const latestReadingRef = useRef<number | null>(null);
 
   const httpPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     navigation.setOptions({
       title: `Device: ${deviceId?.slice(0, 12)}...`,
-      headerRight: () => (
-        <Link
-          href={{ pathname: "/device/settings", params: { id: deviceId } }}
-          asChild
-        >
-          <Pressable style={{ marginRight: 15 }}>
-            <Ionicons name="settings-outline" size={24} color="#1F2937" />
-          </Pressable>
-        </Link>
-      ),
+      headerRight: () =>
+        deviceId ? (
+          <Link
+            href={{ pathname: "/device/settings", params: { id: deviceId } }}
+            asChild
+          >
+            <Pressable style={{ marginRight: 15 }}>
+              <Ionicons name="settings-outline" size={24} color="#1F2937" />
+            </Pressable>
+          </Link>
+        ) : null,
     });
   }, [navigation, deviceId]);
 
@@ -139,35 +118,7 @@ export default function DeviceDetailScreen() {
 
     requestStream(deviceId, true);
 
-    // Poll device readings from API as a fallback sanity check
-    const pollReadings = async () => {
-      try {
-        const data = await getDeviceReadings(deviceId);
-        if (data) {
-          setReadings({
-            gasValue: typeof data.gasValue === "number" ? data.gasValue : "N/A",
-            isFlameDetected: !!data.isFlameDetected,
-            isCriticalAlert: !!data.isCriticalAlert,
-            lastUpdate:
-              typeof data.lastUpdate === "number" ? data.lastUpdate : "N/A",
-          });
-        }
-      } catch (error) {
-        console.error("Error fetching device readings:", error);
-      }
-    };
-
-    // Initial fetch
-    pollReadings();
-
-    // Poll periodically in case socket events are missed
-    const readingsInterval = setInterval(
-      pollReadings,
-      FALLBACK_POLL_INTERVAL_MS
-    );
-
     return () => {
-      clearInterval(readingsInterval);
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
@@ -207,16 +158,6 @@ export default function DeviceDetailScreen() {
       await connectSocket();
       if (cancelled) return;
       subscribeToDevice(deviceId, {
-        sensorData: (payload) => {
-          latestReadingRef.current = payload.timestamp || Date.now();
-          setReadings({
-            gasValue:
-              typeof payload.gasValue === "number" ? payload.gasValue : "N/A",
-            isFlameDetected: Boolean(payload.isFlameDetected),
-            isCriticalAlert: Boolean(payload.isCriticalAlert),
-            lastUpdate: latestReadingRef.current,
-          });
-        },
         streamMode: ({ mode }) => {
           setCurrentMode(mode);
         },
@@ -702,15 +643,12 @@ export default function DeviceDetailScreen() {
         <Text>No Device ID.</Text>
       </SafeAreaView>
     );
-  const lastUpdateDate =
-    readings.lastUpdate !== "N/A"
-      ? new Date(readings.lastUpdate).toLocaleString()
-      : "N/A";
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.videoWrap}>
         {renderContent()}
+
         {showPerformance && (
           <View style={styles.performanceOverlay}>
             <Text style={styles.performanceText}>FPS: {frameRate}</Text>
@@ -821,38 +759,6 @@ export default function DeviceDetailScreen() {
             Relay
           </Text>
         </TouchableOpacity>
-      </View>
-      <View style={styles.card}>
-        <View style={styles.row}>
-          <Text style={styles.stat}>💨 Gas Level:</Text>
-          <Text
-            style={[
-              styles.value,
-              typeof readings.gasValue === "number" &&
-                readings.gasValue > 1000 &&
-                styles.alert,
-            ]}
-          >
-            {readings.gasValue}
-          </Text>
-        </View>
-        <View style={styles.row}>
-          <Text style={styles.stat}>🔥 Flame Detected:</Text>
-          <Text
-            style={[styles.value, readings.isFlameDetected && styles.alert]}
-          >
-            {readings.isFlameDetected ? "YES" : "No"}
-          </Text>
-        </View>
-        <View style={[styles.row, styles.criticalRow]}>
-          <Text style={styles.stat}>🚨 Critical Alert:</Text>
-          <Text
-            style={[styles.value, readings.isCriticalAlert && styles.alert]}
-          >
-            {readings.isCriticalAlert ? "ACTIVE" : "Inactive"}
-          </Text>
-        </View>
-        <Text style={styles.lastUpdate}>Last update: {lastUpdateDate}</Text>
       </View>
     </SafeAreaView>
   );
