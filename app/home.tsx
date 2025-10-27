@@ -81,8 +81,6 @@ export default function HomePage() {
     setRefreshing(false);
   }, [loadData]);
 
-  const criticalDevices = 0;
-
   return (
     <View style={styles.container}>
       {/* Background Circles */}
@@ -110,10 +108,10 @@ export default function HomePage() {
               <Text
                 style={[
                   styles.summaryValue,
-                  criticalDevices > 0 ? styles.summaryValueCritical : undefined,
+                  notifications.filter(n => n.notificationType === 'ml_alert').length > 0 ? styles.summaryValueCritical : undefined,
                 ]}
               >
-                {criticalDevices}
+                {notifications.filter(n => n.notificationType === 'ml_alert').length}
               </Text>
               <Text style={styles.summaryLabel}>Critical Alerts</Text>
             </View>

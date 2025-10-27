@@ -2,14 +2,6 @@ import { getAuthToken, getUserData } from "@/src/services/apiConfig";
 import { io, Socket } from "socket.io-client";
 
 type DeviceEventMap = {
-  sensorData: (payload: {
-    deviceId: string;
-    gasValue: number;
-    isFlameDetected: boolean;
-    isCriticalAlert: boolean;
-    timestamp: number;
-    updatedAt: number;
-  }) => void;
   streamStatus: (payload: {
     deviceId: string;
     status: string;
