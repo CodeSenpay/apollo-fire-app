@@ -29,6 +29,18 @@ type DeviceEventMap = {
     timestamp: number;
     recordedAt: number;
   }) => void;
+  servo: (payload: {
+    deviceId: string;
+    pan: number | null;
+    tilt: number | null;
+    sequence: number;
+    updatedAt: number;
+  }) => void;
+  servoRecenter: (payload: {
+    deviceId: string;
+    sequence: number;
+    updatedAt: number;
+  }) => void;
 };
 
 type DeviceEvents = keyof DeviceEventMap;
@@ -261,4 +273,55 @@ export const unsubscribeFromNotifications = (handler: NotificationHandler) => {
     socket.off("notification", notificationListener);
     notificationListener = null;
   }
+};
+
+const clampServoAngle = (value: number | undefined) => {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return undefined;
+  }
+  return Math.min(180, Math.max(0, value));
+};
+
+const ensureSocket = async (): Promise<Socket | null> => {
+  await connectSocket();
+  if (socket && socket.connected) {
+    return socket;
+  }
+  return null;
+};
+
+export const emitServoCommand = async (
+  deviceId: string,
+  payload: { pan?: number; tilt?: number }
+) => {
+  if (!deviceId) return;
+
+  const activeSocket = await ensureSocket();
+  if (!activeSocket) return;
+
+  const command: { deviceId: string; pan?: number; tilt?: number } = { deviceId };
+  const clampedPan = clampServoAngle(payload.pan);
+  const clampedTilt = clampServoAngle(payload.tilt);
+
+  if (typeof clampedPan === "number") {
+    command.pan = clampedPan;
+  }
+  if (typeof clampedTilt === "number") {
+    command.tilt = clampedTilt;
+  }
+
+  if (typeof command.pan !== "number" && typeof command.tilt !== "number") {
+    return;
+  }
+
+  activeSocket.emit("servoCommand", command);
+};
+
+export const emitServoRecenter = async (deviceId: string) => {
+  if (!deviceId) return;
+
+  const activeSocket = await ensureSocket();
+  if (!activeSocket) return;
+
+  activeSocket.emit("servoRecenter", { deviceId });
 };

@@ -95,6 +95,31 @@ export default function HomePage() {
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#ef4444" />
         }
       >
+        <View style={styles.heroCard}>
+          <View style={styles.heroGlow} />
+          <View style={styles.heroGlowSecondary} />
+          <View style={styles.heroContent}>
+            <Text style={styles.heroBadge}>Apollo Fire</Text>
+            <Text style={styles.heroTitle}>Stay ahead of potential fire hazards</Text>
+            <Text style={styles.heroSubtitle}>
+              Monitor every camera feed in real-time and receive AI-powered alerts before risks escalate.
+            </Text>
+            <View style={styles.heroActions}>
+              <TouchableOpacity style={styles.heroPrimaryAction} onPress={() => router.push("/add-device")}>
+                <Ionicons name="add-circle" size={20} color="#ffffff" />
+                <Text style={styles.heroPrimaryActionText}>Link new device</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.heroSecondaryAction}
+                onPress={() => navigation.navigate("Notifications")}
+              >
+                <Ionicons name="notifications" size={18} color="#ef4444" />
+                <Text style={styles.heroSecondaryActionText}>View alerts</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+
         <Text style={styles.pageTitle}>Your Home Dashboard</Text>
 
         <View style={styles.summaryCard}>
@@ -239,6 +264,98 @@ const styles = StyleSheet.create({
     borderRadius: 40,
     backgroundColor: "#6366f1",
     opacity: 0.07,
+  },
+  heroCard: {
+    backgroundColor: "#0f172a",
+    borderRadius: 24,
+    padding: 24,
+    overflow: "hidden",
+    position: "relative",
+    shadowColor: "#0f172a",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.2,
+    shadowRadius: 18,
+    elevation: 4,
+  },
+  heroGlow: {
+    position: "absolute",
+    top: -60,
+    right: -40,
+    width: 180,
+    height: 180,
+    borderRadius: 90,
+    backgroundColor: "rgba(37,99,235,0.25)",
+    opacity: 0.6,
+  },
+  heroGlowSecondary: {
+    position: "absolute",
+    bottom: -40,
+    left: -30,
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    backgroundColor: "rgba(239,68,68,0.3)",
+    opacity: 0.5,
+  },
+  heroContent: {
+    gap: 14,
+  },
+  heroBadge: {
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(239,68,68,0.18)",
+    color: "#f87171",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    fontSize: 13,
+    fontWeight: "600",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+  },
+  heroTitle: {
+    fontSize: 26,
+    fontWeight: "700",
+    color: "#f9fafb",
+    lineHeight: 32,
+  },
+  heroSubtitle: {
+    fontSize: 14,
+    color: "#e2e8f0",
+    lineHeight: 20,
+  },
+  heroActions: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 6,
+    flexWrap: "wrap",
+  },
+  heroPrimaryAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#ef4444",
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 999,
+  },
+  heroPrimaryActionText: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  heroSecondaryAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "rgba(239,68,68,0.12)",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 999,
+  },
+  heroSecondaryActionText: {
+    color: "#ef4444",
+    fontSize: 14,
+    fontWeight: "600",
   },
   pageTitle: {
     fontSize: 26,

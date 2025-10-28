@@ -353,6 +353,72 @@ export const getRelayStreamUrl = async (deviceId: string): Promise<string | null
   }
 };
 
+export interface ServoState {
+  pan: number | null;
+  tilt: number | null;
+  sequence: number;
+  recenter: boolean;
+  updatedAt: string | null;
+}
+
+const clampServoPayload = (value: number | undefined) => {
+  if (typeof value !== 'number') {
+    return undefined;
+  }
+  return Math.min(180, Math.max(0, value));
+};
+
+export const setServoPosition = async (
+  deviceId: string,
+  payload: { pan?: number; tilt?: number }
+): Promise<void> => {
+  const body: Record<string, number> = {};
+  const clampedPan = clampServoPayload(payload.pan);
+  const clampedTilt = clampServoPayload(payload.tilt);
+
+  if (typeof clampedPan === 'number') {
+    body.pan = clampedPan;
+  }
+  if (typeof clampedTilt === 'number') {
+    body.tilt = clampedTilt;
+  }
+
+  if (Object.keys(body).length === 0) {
+    return;
+  }
+
+  await axios.put(buildApiUrl(`/devices/${deviceId}/servo`), body);
+};
+
+export const recenterServo = async (deviceId: string): Promise<void> => {
+  await axios.post(buildApiUrl(`/devices/${deviceId}/servo/recenter`));
+};
+
+export const getServoState = async (deviceId: string): Promise<ServoState | null> => {
+  try {
+    const response = await axios.get(buildApiUrl(`/devices/${deviceId}/servo`));
+    if (!response.data?.success || !response.data?.servo) {
+      return null;
+    }
+
+    const servo = response.data.servo;
+    return {
+      pan: typeof servo.pan === 'number' ? servo.pan : null,
+      tilt: typeof servo.tilt === 'number' ? servo.tilt : null,
+      sequence: typeof servo.sequence === 'number' ? servo.sequence : 0,
+      recenter: Boolean(servo.recenter),
+      updatedAt: servo.updatedAt ?? null,
+    };
+  } catch (error) {
+    console.error('Error fetching servo state:', error);
+    if (axios.isAxiosError(error)) {
+      console.error('Response data:', error.response?.data);
+      console.error('Response status:', error.response?.status);
+    }
+    return null;
+  }
+};
+
 // Push notification token registration
 export const registerPushToken = async (token: string, userId: string): Promise<void> => {
   console.log(JSON.stringify({ token, userId }))

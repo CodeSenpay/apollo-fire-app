@@ -1,18 +1,30 @@
-import { getRelayStreamUrl, requestStream, setStreamMode } from "@/src/services/apiConfig";
+import {
+  getRelayStreamUrl,
+  requestStream,
+  setStreamMode,
+  setServoPosition as apiSetServoPosition,
+  recenterServo as apiRecenterServo,
+  getServoState,
+  ServoState,
+} from "@/src/services/apiConfig";
 import {
   connectSocket,
   subscribeToDevice,
   unsubscribeFromDevice,
+  emitServoCommand,
+  emitServoRecenter,
 } from "@/src/state/socket";
 import { Link, useLocalSearchParams, useNavigation } from "expo-router";
 import React, {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import {
   ActivityIndicator,
+  Animated,
   Dimensions,
   Image,
   Pressable,
@@ -23,6 +35,14 @@ import {
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+
+const STREAM_RETRY_INTERVAL_MS = 5000;
+const MAX_RECONNECT_ATTEMPTS = 5;
+const MONITOR_INTERVAL = 1000;
+const PERFORMANCE_SAMPLE_WINDOW_MS = 5000;
+const STREAM_REFRESH_INTERVAL_MS = 30000;
+const SERVO_REST_FALLBACK_DELAY_MS = 120;
+const SERVO_STEP_DEGREES = 5;
 
 // Helper function to convert raw binary data to a base64 string
 function arrayBufferToBase64(buffer: ArrayBuffer) {
@@ -63,6 +83,10 @@ export default function DeviceDetailScreen() {
   const [streamQuality, setStreamQuality] = useState<"low" | "medium" | "high">(
     "medium"
   );
+  const [panAngle, setPanAngle] = useState<number | null>(null);
+  const [tiltAngle, setTiltAngle] = useState<number | null>(null);
+  const [servoSequence, setServoSequence] = useState<number>(0);
+  const [servoBusy, setServoBusy] = useState(false);
 
   const httpPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -173,6 +197,24 @@ export default function DeviceDetailScreen() {
         mlAlert: (payload) => {
           console.log("Realtime ML alert", payload);
         },
+        servo: ({ pan, tilt, sequence }) => {
+          if (sequence >= servoSequence) {
+            setServoSequence(sequence);
+            if (typeof pan === "number") {
+              setPanAngle(pan);
+            }
+            if (typeof tilt === "number") {
+              setTiltAngle(tilt);
+            }
+          }
+        },
+        servoRecenter: ({ sequence }) => {
+          if (sequence >= servoSequence) {
+            setServoSequence(sequence);
+            setPanAngle(90);
+            setTiltAngle(90);
+          }
+        },
       });
     };
 
@@ -205,10 +247,10 @@ export default function DeviceDetailScreen() {
   const lastSwapRef = useRef<number>(0);
   const scheduledSwapRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const frameCountRef = useRef(0);
-  const lastFrameTimeRef = useRef(0);
+  const lastFrameTimeRef = useRef<number>(0);
   const performanceRef = useRef({ droppedFrames: 0, totalFrames: 0 });
-
-  // Message throttling and backpressure handling
+  const servoRestTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestServoCommandRef = useRef<{ pan?: number; tilt?: number }>({});
   const messageQueueRef = useRef<ArrayBuffer[]>([]);
   const processingMessageRef = useRef(false);
   const lastProcessedMessageRef = useRef<number>(0);
@@ -217,7 +259,7 @@ export default function DeviceDetailScreen() {
     typeof setTimeout
   > | null>(null);
 
-  // Optimized message processing for smooth playback
+  // Message throttling and backpressure handling
   const processMessageQueue = useCallback(async () => {
     if (processingMessageRef.current || messageQueueRef.current.length === 0) {
       return;
@@ -637,6 +679,114 @@ export default function DeviceDetailScreen() {
     );
   };
 
+  const handleServoPositionChange = useCallback(
+    (axis: "pan" | "tilt", value: number) => {
+      if (!deviceId) return;
+
+      const nextPan = axis === "pan" ? value : panAngle;
+      const nextTilt = axis === "tilt" ? value : tiltAngle;
+
+      if (axis === "pan") {
+        setPanAngle(value);
+      } else {
+        setTiltAngle(value);
+      }
+
+      const command: { pan?: number; tilt?: number } = {};
+      if (typeof nextPan === "number") {
+        command.pan = nextPan;
+      }
+      if (typeof nextTilt === "number") {
+        command.tilt = nextTilt;
+      }
+
+      latestServoCommandRef.current = command;
+
+      emitServoCommand(deviceId, command).catch((error) => {
+        console.warn("Socket servo command failed", error);
+      });
+
+      if (servoRestTimeoutRef.current) {
+        clearTimeout(servoRestTimeoutRef.current);
+      }
+
+      servoRestTimeoutRef.current = setTimeout(async () => {
+        servoRestTimeoutRef.current = null;
+        try {
+          setServoBusy(true);
+          await apiSetServoPosition(deviceId, {
+            pan: latestServoCommandRef.current.pan,
+            tilt: latestServoCommandRef.current.tilt,
+          });
+        } catch (error) {
+          console.error("Failed to set servo position", error);
+        } finally {
+          setServoBusy(false);
+        }
+      }, SERVO_REST_FALLBACK_DELAY_MS);
+    },
+    [deviceId, panAngle, tiltAngle]
+  );
+
+  const handleServoAdjust = useCallback(
+    (axis: "pan" | "tilt", delta: number) => {
+      const current = axis === "pan" ? panAngle ?? 90 : tiltAngle ?? 90;
+      const next = Math.min(180, Math.max(0, current + delta));
+      if (next === current) {
+        return;
+      }
+      handleServoPositionChange(axis, next);
+    },
+    [handleServoPositionChange, panAngle, tiltAngle]
+  );
+
+  const handleRecenterServos = useCallback(async () => {
+    if (!deviceId) return;
+    setServoBusy(true);
+    try {
+      emitServoRecenter(deviceId).catch((error) => {
+        console.warn("Socket servo recenter failed", error);
+      });
+      await apiRecenterServo(deviceId);
+    } catch (error) {
+      console.error("Failed to recenter servos", error);
+    } finally {
+      setServoBusy(false);
+    }
+  }, [deviceId]);
+
+  useEffect(() => {
+    if (!deviceId) return;
+
+    let cancelled = false;
+
+    const loadServoState = async () => {
+      try {
+        const state: ServoState | null = await getServoState(deviceId);
+        if (!state || cancelled) return;
+        setServoSequence(state.sequence);
+        if (typeof state.pan === "number") {
+          setPanAngle(state.pan);
+        }
+        if (typeof state.tilt === "number") {
+          setTiltAngle(state.tilt);
+        }
+        if (state.recenter) {
+          setPanAngle(90);
+          setTiltAngle(90);
+        }
+      } catch (error) {
+        console.warn("Unable to fetch servo state", error);
+      }
+    };
+
+    loadServoState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [deviceId]);
+
   if (!deviceId)
     return (
       <SafeAreaView style={styles.container}>
@@ -759,6 +909,68 @@ export default function DeviceDetailScreen() {
             Relay
           </Text>
         </TouchableOpacity>
+      </View>
+      <View style={styles.servoCard}>
+        <Text style={styles.servoTitle}>Pan / Tilt Control</Text>
+        <View style={styles.servoCircularWrapper}>
+          <View style={styles.servoCircle}>
+            <TouchableOpacity
+              style={[
+                styles.servoDirectionalButton,
+                styles.servoButtonTop,
+                servoBusy && styles.servoButtonDisabled,
+              ]}
+              onPress={() => handleServoAdjust("tilt", -SERVO_STEP_DEGREES)}
+              disabled={servoBusy}
+            >
+              <Ionicons name="chevron-up" size={24} color="#F9FAFB" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.servoDirectionalButton,
+                styles.servoButtonBottom,
+                servoBusy && styles.servoButtonDisabled,
+              ]}
+              onPress={() => handleServoAdjust("tilt", SERVO_STEP_DEGREES)}
+              disabled={servoBusy}
+            >
+              <Ionicons name="chevron-down" size={24} color="#F9FAFB" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.servoDirectionalButton,
+                styles.servoButtonLeft,
+                servoBusy && styles.servoButtonDisabled,
+              ]}
+              onPress={() => handleServoAdjust("pan", -SERVO_STEP_DEGREES)}
+              disabled={servoBusy}
+            >
+              <Ionicons name="chevron-back" size={24} color="#F9FAFB" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.servoDirectionalButton,
+                styles.servoButtonRight,
+                servoBusy && styles.servoButtonDisabled,
+              ]}
+              onPress={() => handleServoAdjust("pan", SERVO_STEP_DEGREES)}
+              disabled={servoBusy}
+            >
+              <Ionicons name="chevron-forward" size={24} color="#F9FAFB" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.servoCenterButton, servoBusy && styles.servoButtonDisabled]}
+              onPress={handleRecenterServos}
+              disabled={servoBusy}
+            >
+              <Ionicons name="stop-circle" size={24} color="#1F2937" />
+            </TouchableOpacity>
+          </View>
+        </View>
+        <View style={styles.servoReadoutRow}>
+          <Text style={styles.servoReadout}>Pan: {Math.round(panAngle ?? 90)}°</Text>
+          <Text style={styles.servoReadout}>Tilt: {Math.round(tiltAngle ?? 90)}°</Text>
+        </View>
       </View>
     </SafeAreaView>
   );
@@ -929,5 +1141,116 @@ const styles = StyleSheet.create({
   },
   qualityButtonActive: {
     color: "#FFFFFF",
+  },
+  servoCard: {
+    marginTop: 16,
+    backgroundColor: "#FFFFFF",
+    padding: 16,
+    borderRadius: 12,
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  servoTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#111827",
+    marginBottom: 12,
+  },
+  servoRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  servoLabel: {
+    width: 48,
+    fontSize: 16,
+    color: "#4B5563",
+    fontWeight: "600",
+  },
+  servoCircularWrapper: {
+    alignItems: "center",
+    justifyContent: "center",
+    marginVertical: 12,
+  },
+  servoCircle: {
+    width: 180,
+    height: 180,
+    borderRadius: 90,
+    backgroundColor: "#1F2937",
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  servoDirectionalButton: {
+    position: "absolute",
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#374151",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  servoButtonTop: {
+    top: 10,
+    left: "50%",
+    marginLeft: -28,
+  },
+  servoButtonBottom: {
+    bottom: 10,
+    left: "50%",
+    marginLeft: -28,
+  },
+  servoButtonLeft: {
+    left: 10,
+    top: "50%",
+    marginTop: -28,
+  },
+  servoButtonRight: {
+    right: 10,
+    top: "50%",
+    marginTop: -28,
+  },
+  servoCenterButton: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: "#E5E7EB",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  servoButtonDisabled: {
+    opacity: 0.5,
+  },
+  servoReadoutRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 12,
+  },
+  servoReadout: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#1F2937",
+  },
+  recenterButton: {
+    marginTop: 8,
+    alignSelf: "flex-end",
+    backgroundColor: "#3B82F6",
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  recenterButtonDisabled: {
+    backgroundColor: "#93C5FD",
+  },
+  recenterButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "600",
   },
 });
