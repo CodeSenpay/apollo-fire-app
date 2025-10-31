@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 // Configure your API base URL here
 const DEFAULT_API_BASE_URL = "http://192.168.1.104:3000/api";
-const API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL || DEFAULT_API_BASE_URL).replace(/\/+$/, "");
+export const API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL || DEFAULT_API_BASE_URL).replace(/\/+$/, "");
 
 const buildApiUrl = (path: string) => {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;

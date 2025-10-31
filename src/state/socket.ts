@@ -1,4 +1,4 @@
-import { getAuthToken, getUserData } from "@/src/services/apiConfig";
+import { API_BASE_URL, getAuthToken, getUserData } from "@/src/services/apiConfig";
 import { io, Socket } from "socket.io-client";
 
 type DeviceEventMap = {
@@ -45,7 +45,16 @@ type DeviceEventMap = {
 
 type DeviceEvents = keyof DeviceEventMap;
 
-const SOCKET_URL = (process.env.EXPO_PUBLIC_RELAY_SOCKET_URL || "http://192.168.1.14:8000").replace(/\/$/, "");
+const deriveDefaultSocketUrl = () => {
+  try {
+    const url = new URL(API_BASE_URL);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return "http://192.168.1.14:8000";
+  }
+};
+
+const SOCKET_URL = (process.env.EXPO_PUBLIC_RELAY_SOCKET_URL || deriveDefaultSocketUrl()).replace(/\/$/, "");
 
 let socket: Socket | null = null;
 let connecting = false;
