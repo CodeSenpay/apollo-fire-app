@@ -43,6 +43,11 @@ const PERFORMANCE_SAMPLE_WINDOW_MS = 5000;
 const STREAM_REFRESH_INTERVAL_MS = 30000;
 const SERVO_REST_FALLBACK_DELAY_MS = 120;
 const SERVO_STEP_DEGREES = 5;
+const SERVO_DEBUG_TAG = "[ServoClient]";
+
+const logServoClient = (...args: unknown[]) => {
+  console.log(SERVO_DEBUG_TAG, ...args);
+};
 
 // Helper function to convert raw binary data to a base64 string
 function arrayBufferToBase64(buffer: ArrayBuffer) {
@@ -78,6 +83,7 @@ export default function DeviceDetailScreen() {
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [streamActive, setStreamActive] = useState(false);
   const [currentMode, setCurrentMode] = useState<"local" | "relay">("local");
   const [showPerformance, setShowPerformance] = useState(false);
   const [streamQuality, setStreamQuality] = useState<"low" | "medium" | "high">(
@@ -89,6 +95,114 @@ export default function DeviceDetailScreen() {
   const [servoBusy, setServoBusy] = useState(false);
 
   const httpPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const localServoEndpoints = useMemo(() => {
+    if (!streamUrl || !streamUrl.startsWith("ws")) {
+      return null;
+    }
+    try {
+      const normalizedUrl = streamUrl.replace(/^ws/, "http");
+      const url = new URL(normalizedUrl);
+      const base = `${url.protocol}//${url.host}`;
+      return {
+        command: `${base}/servo`,
+        recenter: `${base}/servo/recenter`,
+      };
+    } catch (error) {
+      console.warn("Failed to derive local servo endpoint from stream URL", error);
+      return null;
+    }
+  }, [streamUrl]);
+
+  const sendServoCommandLocal = useCallback(
+    async (payload: { pan?: number; tilt?: number }) => {
+      if (!localServoEndpoints || currentMode !== "local") {
+        return false;
+      }
+
+      try {
+        const body: Record<string, number> = {};
+        if (typeof payload.pan === "number") {
+          body.pan = payload.pan;
+        }
+        if (typeof payload.tilt === "number") {
+          body.tilt = payload.tilt;
+        }
+
+        if (Object.keys(body).length === 0) {
+          return false;
+        }
+
+        logServoClient("Sending servo command via local HTTP", {
+          endpoint: localServoEndpoints.command,
+          body,
+        });
+
+        const response = await fetch(localServoEndpoints.command, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`HTTP ${response.status}: ${errorText}`);
+        }
+
+        logServoClient("Local servo command succeeded", {
+          endpoint: localServoEndpoints.command,
+          body,
+        });
+        return true;
+      } catch (error) {
+        console.warn("Local servo command failed", error);
+        logServoClient("Local servo command failed", {
+          endpoint: localServoEndpoints?.command,
+          error,
+        });
+        return false;
+      }
+    },
+    [localServoEndpoints, currentMode]
+  );
+
+  const sendServoRecenterLocal = useCallback(async () => {
+    if (!localServoEndpoints || currentMode !== "local") {
+      return false;
+    }
+
+    try {
+      logServoClient("Requesting servo recenter via local HTTP", {
+        endpoint: localServoEndpoints.recenter,
+      });
+
+      const response = await fetch(localServoEndpoints.recenter, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+
+      logServoClient("Local servo recenter succeeded", {
+        endpoint: localServoEndpoints.recenter,
+      });
+      return true;
+    } catch (error) {
+      console.warn("Local servo recenter failed", error);
+      logServoClient("Local servo recenter failed", {
+        endpoint: localServoEndpoints?.recenter,
+        error,
+      });
+      return false;
+    }
+  }, [localServoEndpoints, currentMode]);
 
   useEffect(() => {
     navigation.setOptions({
@@ -190,7 +304,9 @@ export default function DeviceDetailScreen() {
           setIsLoading(false);
         },
         streamStatus: ({ status }) => {
-          if (status === "active") {
+          const isActive = status === "active";
+          setStreamActive(isActive);
+          if (isActive) {
             setStreamError(null);
           }
         },
@@ -208,11 +324,11 @@ export default function DeviceDetailScreen() {
             }
           }
         },
-        servoRecenter: ({ sequence }) => {
+        servoRecenter: ({ pan, tilt, sequence }) => {
           if (sequence >= servoSequence) {
             setServoSequence(sequence);
-            setPanAngle(90);
-            setTiltAngle(90);
+            setPanAngle(pan ?? 90);
+            setTiltAngle(tilt ?? 90);
           }
         },
       });
@@ -405,13 +521,25 @@ export default function DeviceDetailScreen() {
 
     let wsUrl: string;
     if (currentMode === "local") {
-      wsUrl = streamUrl.startsWith("ws://")
-        ? streamUrl
-        : streamUrl.replace("http://", "ws://").replace("/stream", "/ws");
+      // Clean up the URL and ensure proper WebSocket format
+      if (streamUrl.startsWith("ws://") || streamUrl.startsWith("wss://")) {
+        wsUrl = streamUrl;
+      } else {
+        // Convert HTTP to WS and normalize the URL
+        wsUrl = streamUrl
+          .replace("http://", "ws://")
+          .replace("https://", "wss://")
+          .replace("/stream", "/ws");
+        
+        // Remove explicit :80 port for ws:// (WebSocket default)
+        wsUrl = wsUrl.replace(":80/", "/");
+      }
     } else {
       // For relay mode, use the stream URL directly (could be WebSocket or HTTP)
       wsUrl = streamUrl;
     }
+    
+    console.log("[WebSocket] Connecting to:", wsUrl);
 
     // Only create WebSocket for local mode or if URL is WebSocket
     if (
@@ -419,10 +547,21 @@ export default function DeviceDetailScreen() {
       wsUrl.startsWith("ws://") ||
       wsUrl.startsWith("wss://")
     ) {
-      ws.current = new WebSocket(wsUrl);
-      ws.current.binaryType = "arraybuffer";
+      console.log("[WebSocket] Creating connection to:", wsUrl);
+      
+      try {
+        ws.current = new WebSocket(wsUrl);
+        ws.current.binaryType = "arraybuffer";
+        console.log("[WebSocket] Instance created, waiting for connection...");
+      } catch (error) {
+        console.error("[WebSocket] Failed to create instance:", error);
+        setStreamError(`Failed to create WebSocket: ${error}`);
+        setIsLoading(false);
+        return;
+      }
 
       ws.current.onopen = () => {
+        console.log("[WebSocket] ✅ CONNECTED! Ready to receive frames");
         setIsLoading(false);
         setStreamError(null);
         reconnectAttempts.current = 0; // Reset on successful connection
@@ -453,12 +592,23 @@ export default function DeviceDetailScreen() {
       };
 
       ws.current.onerror = (error) => {
-        setStreamError("Connection error. Check network and try again.");
+        console.error("[WebSocket] ❌ ERROR:", JSON.stringify(error));
+        console.error("[WebSocket] Error details:", {
+          message: (error as any)?.message,
+          type: (error as any)?.type,
+          target: (error as any)?.target?.url
+        });
+        setStreamError(`Connection error: ${(error as any)?.message || 'Network error'}`);
         setIsLoading(false);
       };
 
       ws.current.onclose = (event) => {
-        console.log("WebSocket closed:", event.code, event.reason);
+        console.log("[WebSocket] ❌ CLOSED:", {
+          code: event.code,
+          reason: event.reason,
+          wasClean: event.wasClean,
+          url: wsUrl
+        });
         setFrameA(null);
         setFrameB(null);
         bufferARef.current = null;
@@ -686,6 +836,14 @@ export default function DeviceDetailScreen() {
       const nextPan = axis === "pan" ? value : panAngle;
       const nextTilt = axis === "tilt" ? value : tiltAngle;
 
+      logServoClient("handleServoPositionChange", {
+        deviceId,
+        axis,
+        value,
+        nextPan,
+        nextTilt,
+      });
+
       if (axis === "pan") {
         setPanAngle(value);
       } else {
@@ -701,9 +859,9 @@ export default function DeviceDetailScreen() {
       }
 
       latestServoCommandRef.current = command;
-
-      emitServoCommand(deviceId, command).catch((error) => {
-        console.warn("Socket servo command failed", error);
+      logServoClient("Queued servo command", {
+        deviceId,
+        command,
       });
 
       if (servoRestTimeoutRef.current) {
@@ -714,13 +872,58 @@ export default function DeviceDetailScreen() {
         servoRestTimeoutRef.current = null;
         try {
           setServoBusy(true);
-          await apiSetServoPosition(deviceId, {
-            pan: latestServoCommandRef.current.pan,
-            tilt: latestServoCommandRef.current.tilt,
-          });
-        } catch (error) {
-          console.error("Failed to set servo position", error);
+          const commandPayload = latestServoCommandRef.current;
+          let dispatched = false;
+
+          if (await sendServoCommandLocal(commandPayload)) {
+            dispatched = true;
+          }
+
+          if (!dispatched) {
+            try {
+              logServoClient("Sending servo command via WebSocket", {
+                deviceId,
+                command: commandPayload,
+              });
+              await emitServoCommand(deviceId, commandPayload);
+              dispatched = true;
+            } catch (wsError) {
+              console.warn("WebSocket servo command failed, falling back to HTTP API", wsError);
+              logServoClient("WebSocket servo command failed", {
+                deviceId,
+                command: commandPayload,
+                error: wsError,
+              });
+            }
+          }
+
+          if (!dispatched) {
+            try {
+              logServoClient("Sending servo command via HTTP fallback", {
+                deviceId,
+                command: commandPayload,
+              });
+              await apiSetServoPosition(deviceId, {
+                pan: commandPayload.pan,
+                tilt: commandPayload.tilt,
+              });
+              dispatched = true;
+            } catch (httpError) {
+              console.error("Failed to set servo position via HTTP", httpError);
+              logServoClient("HTTP servo command failed", {
+                deviceId,
+                command: commandPayload,
+                error: httpError,
+              });
+            }
+          }
+        } catch (wsError) {
+          console.error("Unexpected error dispatching servo command", wsError);
         } finally {
+          logServoClient("Servo command dispatch complete", {
+            deviceId,
+            command: latestServoCommandRef.current,
+          });
           setServoBusy(false);
         }
       }, SERVO_REST_FALLBACK_DELAY_MS);
@@ -735,6 +938,12 @@ export default function DeviceDetailScreen() {
       if (next === current) {
         return;
       }
+      logServoClient("handleServoAdjust", {
+        axis,
+        delta,
+        current,
+        next,
+      });
       handleServoPositionChange(axis, next);
     },
     [handleServoPositionChange, panAngle, tiltAngle]
@@ -744,13 +953,33 @@ export default function DeviceDetailScreen() {
     if (!deviceId) return;
     setServoBusy(true);
     try {
-      emitServoRecenter(deviceId).catch((error) => {
-        console.warn("Socket servo recenter failed", error);
+      if (await sendServoRecenterLocal()) {
+        return;
+      }
+
+      logServoClient("Requesting servo recenter via WebSocket", { deviceId });
+      await emitServoRecenter(deviceId);
+    } catch (wsError) {
+      console.warn("WebSocket servo recenter failed, falling back to HTTP API", wsError);
+      logServoClient("WebSocket servo recenter failed", {
+        deviceId,
+        error: wsError,
       });
-      await apiRecenterServo(deviceId);
-    } catch (error) {
-      console.error("Failed to recenter servos", error);
+      // Fallback to HTTP API only if WebSocket fails
+      try {
+        logServoClient("Requesting servo recenter via HTTP fallback", {
+          deviceId,
+        });
+        await apiRecenterServo(deviceId);
+      } catch (httpError) {
+        console.error("Failed to recenter servos via HTTP", httpError);
+        logServoClient("HTTP servo recenter failed", {
+          deviceId,
+          error: httpError,
+        });
+      }
     } finally {
+      logServoClient("Servo recenter request complete", { deviceId });
       setServoBusy(false);
     }
   }, [deviceId]);
@@ -762,8 +991,13 @@ export default function DeviceDetailScreen() {
 
     const loadServoState = async () => {
       try {
+        logServoClient("Fetching servo state", { deviceId });
         const state: ServoState | null = await getServoState(deviceId);
         if (!state || cancelled) return;
+        logServoClient("Received servo state", {
+          deviceId,
+          state,
+        });
         setServoSequence(state.sequence);
         if (typeof state.pan === "number") {
           setPanAngle(state.pan);
@@ -787,6 +1021,47 @@ export default function DeviceDetailScreen() {
     };
   }, [deviceId]);
 
+  const renderStreamBadge = () => {
+    if (isLoading) {
+      return null;
+    }
+    return (
+      <View
+        style={[
+          styles.streamBadge,
+          streamActive ? styles.streamBadgeActive : styles.streamBadgeInactive,
+        ]}
+      >
+        <Text
+          style={[
+            styles.streamBadgeText,
+            streamActive
+              ? styles.streamBadgeTextActive
+              : styles.streamBadgeTextInactive,
+          ]}
+        >
+          {streamActive ? "LIVE" : "OFFLINE"}
+        </Text>
+      </View>
+    );
+  };
+
+  const renderServoNotice = () => {
+    if (streamActive || streamError) {
+      return null;
+    }
+    if (servoSequence === 0) {
+      return (
+        <View style={styles.servoNotice}>
+          <Text style={styles.servoNoticeText}>
+            Waiting for servo connection. Verify device control socket credentials and hardware power.
+          </Text>
+        </View>
+      );
+    }
+    return null;
+  };
+
   if (!deviceId)
     return (
       <SafeAreaView style={styles.container}>
@@ -797,7 +1072,9 @@ export default function DeviceDetailScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.videoWrap}>
+        {renderStreamBadge()}
         {renderContent()}
+        {renderServoNotice()}
 
         {showPerformance && (
           <View style={styles.performanceOverlay}>
@@ -981,7 +1258,50 @@ const { width } = Dimensions.get("window");
 const VIDEO_HEIGHT = Math.round((width - 32) * (3 / 4));
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16, backgroundColor: "#F3F4F6" },
+  container: {
+    flex: 1,
+    backgroundColor: "#F3F4F6",
+  },
+  streamBadge: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    marginBottom: 12,
+    marginLeft: 12,
+  },
+  streamBadgeActive: {
+    backgroundColor: "rgba(34,197,94,0.15)",
+  },
+  streamBadgeInactive: {
+    backgroundColor: "rgba(239,68,68,0.15)",
+  },
+  streamBadgeText: {
+    fontSize: 12,
+    fontWeight: "600",
+    letterSpacing: 1,
+  },
+  streamBadgeTextActive: {
+    color: "#15803d",
+  },
+  streamBadgeTextInactive: {
+    color: "#b91c1c",
+  },
+  servoNotice: {
+    position: "absolute",
+    bottom: 16,
+    left: 16,
+    right: 16,
+    backgroundColor: "rgba(254,215,170,0.85)",
+    borderRadius: 12,
+    padding: 12,
+  },
+  servoNoticeText: {
+    color: "#9a3412",
+    fontSize: 13,
+    textAlign: "center",
+    fontWeight: "500",
+  },
   videoWrap: {
     height: VIDEO_HEIGHT,
     backgroundColor: "#000",

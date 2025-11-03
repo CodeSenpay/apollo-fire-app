@@ -38,6 +38,8 @@ type DeviceEventMap = {
   }) => void;
   servoRecenter: (payload: {
     deviceId: string;
+    pan: number;
+    tilt: number;
     sequence: number;
     updatedAt: number;
   }) => void;
@@ -291,12 +293,12 @@ const clampServoAngle = (value: number | undefined) => {
   return Math.min(180, Math.max(0, value));
 };
 
-const ensureSocket = async (): Promise<Socket | null> => {
+const ensureSocket = async (): Promise<Socket> => {
   await connectSocket();
   if (socket && socket.connected) {
     return socket;
   }
-  return null;
+  throw new Error("Control socket not connected");
 };
 
 export const emitServoCommand = async (
@@ -306,7 +308,6 @@ export const emitServoCommand = async (
   if (!deviceId) return;
 
   const activeSocket = await ensureSocket();
-  if (!activeSocket) return;
 
   const command: { deviceId: string; pan?: number; tilt?: number } = { deviceId };
   const clampedPan = clampServoAngle(payload.pan);
@@ -330,7 +331,6 @@ export const emitServoRecenter = async (deviceId: string) => {
   if (!deviceId) return;
 
   const activeSocket = await ensureSocket();
-  if (!activeSocket) return;
 
   activeSocket.emit("servoRecenter", { deviceId });
 };
