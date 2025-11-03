@@ -42,11 +42,19 @@ const MONITOR_INTERVAL = 1000;
 const PERFORMANCE_SAMPLE_WINDOW_MS = 5000;
 const STREAM_REFRESH_INTERVAL_MS = 30000;
 const SERVO_REST_FALLBACK_DELAY_MS = 120;
+const SERVO_HOLD_INTERVAL_MS = 150;
 const SERVO_STEP_DEGREES = 5;
+const SERVO_PAN_MAX_DEGREES = 180;
+const SERVO_TILT_MAX_DEGREES = 140;
 const SERVO_DEBUG_TAG = "[ServoClient]";
 
 const logServoClient = (...args: unknown[]) => {
   console.log(SERVO_DEBUG_TAG, ...args);
+};
+
+const clampServoValue = (axis: "pan" | "tilt", value: number) => {
+  const max = axis === "pan" ? SERVO_PAN_MAX_DEGREES : SERVO_TILT_MAX_DEGREES;
+  return Math.min(max, Math.max(0, value));
 };
 
 // Helper function to convert raw binary data to a base64 string
@@ -317,18 +325,22 @@ export default function DeviceDetailScreen() {
           if (sequence >= servoSequence) {
             setServoSequence(sequence);
             if (typeof pan === "number") {
-              setPanAngle(pan);
+              setPanAngle(clampServoValue("pan", pan));
             }
             if (typeof tilt === "number") {
-              setTiltAngle(tilt);
+              setTiltAngle(clampServoValue("tilt", tilt));
             }
           }
         },
         servoRecenter: ({ pan, tilt, sequence }) => {
           if (sequence >= servoSequence) {
             setServoSequence(sequence);
-            setPanAngle(pan ?? 90);
-            setTiltAngle(tilt ?? 90);
+            setPanAngle(
+              typeof pan === "number"
+                ? clampServoValue("pan", pan)
+                : clampServoValue("pan", 90)
+            );
+            setTiltAngle(clampServoValue("tilt", tilt ?? 90));
           }
         },
       });
@@ -366,6 +378,9 @@ export default function DeviceDetailScreen() {
   const lastFrameTimeRef = useRef<number>(0);
   const performanceRef = useRef({ droppedFrames: 0, totalFrames: 0 });
   const servoRestTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const servoHoldIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const servoHoldParamsRef = useRef<{ axis: "pan" | "tilt"; delta: number } | null>(null);
+  const servoBusyRef = useRef(false);
   const latestServoCommandRef = useRef<{ pan?: number; tilt?: number }>({});
   const messageQueueRef = useRef<ArrayBuffer[]>([]);
   const processingMessageRef = useRef(false);
@@ -833,21 +848,22 @@ export default function DeviceDetailScreen() {
     (axis: "pan" | "tilt", value: number) => {
       if (!deviceId) return;
 
-      const nextPan = axis === "pan" ? value : panAngle;
-      const nextTilt = axis === "tilt" ? value : tiltAngle;
+      const clampedValue = clampServoValue(axis, value);
+      const nextPan = axis === "pan" ? clampedValue : panAngle;
+      const nextTilt = axis === "tilt" ? clampedValue : tiltAngle;
 
       logServoClient("handleServoPositionChange", {
         deviceId,
         axis,
-        value,
+        value: clampedValue,
         nextPan,
         nextTilt,
       });
 
       if (axis === "pan") {
-        setPanAngle(value);
+        setPanAngle(clampedValue);
       } else {
-        setTiltAngle(value);
+        setTiltAngle(clampedValue);
       }
 
       const command: { pan?: number; tilt?: number } = {};
@@ -934,7 +950,7 @@ export default function DeviceDetailScreen() {
   const handleServoAdjust = useCallback(
     (axis: "pan" | "tilt", delta: number) => {
       const current = axis === "pan" ? panAngle ?? 90 : tiltAngle ?? 90;
-      const next = Math.min(180, Math.max(0, current + delta));
+      const next = clampServoValue(axis, current + delta);
       if (next === current) {
         return;
       }
@@ -948,6 +964,52 @@ export default function DeviceDetailScreen() {
     },
     [handleServoPositionChange, panAngle, tiltAngle]
   );
+
+  const handleServoAdjustRef = useRef(handleServoAdjust);
+
+  useEffect(() => {
+    handleServoAdjustRef.current = handleServoAdjust;
+  }, [handleServoAdjust]);
+
+  useEffect(() => {
+    servoBusyRef.current = servoBusy;
+    if (!servoBusy && servoHoldParamsRef.current) {
+      const { axis, delta } = servoHoldParamsRef.current;
+      handleServoAdjustRef.current(axis, delta);
+    }
+  }, [servoBusy]);
+
+  const stopServoHold = useCallback(() => {
+    if (servoHoldIntervalRef.current) {
+      clearInterval(servoHoldIntervalRef.current);
+      servoHoldIntervalRef.current = null;
+    }
+    servoHoldParamsRef.current = null;
+  }, []);
+
+  const startServoHold = useCallback(
+    (axis: "pan" | "tilt", delta: number) => {
+      stopServoHold();
+      servoHoldParamsRef.current = { axis, delta };
+      const attemptAdjust = () => {
+        if (servoBusyRef.current) {
+          return;
+        }
+        handleServoAdjustRef.current(axis, delta);
+      };
+      attemptAdjust();
+      servoHoldIntervalRef.current = setInterval(() => {
+        attemptAdjust();
+      }, SERVO_HOLD_INTERVAL_MS);
+    },
+    [stopServoHold]
+  );
+
+  useEffect(() => {
+    return () => {
+      stopServoHold();
+    };
+  }, [stopServoHold]);
 
   const handleRecenterServos = useCallback(async () => {
     if (!deviceId) return;
@@ -1000,14 +1062,14 @@ export default function DeviceDetailScreen() {
         });
         setServoSequence(state.sequence);
         if (typeof state.pan === "number") {
-          setPanAngle(state.pan);
+          setPanAngle(clampServoValue("pan", state.pan));
         }
         if (typeof state.tilt === "number") {
-          setTiltAngle(state.tilt);
+          setTiltAngle(clampServoValue("tilt", state.tilt));
         }
         if (state.recenter) {
-          setPanAngle(90);
-          setTiltAngle(90);
+          setPanAngle(clampServoValue("pan", 90));
+          setTiltAngle(clampServoValue("tilt", 90));
         }
       } catch (error) {
         console.warn("Unable to fetch servo state", error);
@@ -1197,8 +1259,9 @@ export default function DeviceDetailScreen() {
                 styles.servoButtonTop,
                 servoBusy && styles.servoButtonDisabled,
               ]}
-              onPress={() => handleServoAdjust("tilt", -SERVO_STEP_DEGREES)}
-              disabled={servoBusy}
+              onPressIn={() => startServoHold("tilt", -SERVO_STEP_DEGREES)}
+              onPressOut={stopServoHold}
+              disabled={servoBusy && !servoHoldParamsRef.current}
             >
               <Ionicons name="chevron-up" size={24} color="#F9FAFB" />
             </TouchableOpacity>
@@ -1208,8 +1271,9 @@ export default function DeviceDetailScreen() {
                 styles.servoButtonBottom,
                 servoBusy && styles.servoButtonDisabled,
               ]}
-              onPress={() => handleServoAdjust("tilt", SERVO_STEP_DEGREES)}
-              disabled={servoBusy}
+              onPressIn={() => startServoHold("tilt", SERVO_STEP_DEGREES)}
+              onPressOut={stopServoHold}
+              disabled={servoBusy && !servoHoldParamsRef.current}
             >
               <Ionicons name="chevron-down" size={24} color="#F9FAFB" />
             </TouchableOpacity>
@@ -1219,8 +1283,9 @@ export default function DeviceDetailScreen() {
                 styles.servoButtonLeft,
                 servoBusy && styles.servoButtonDisabled,
               ]}
-              onPress={() => handleServoAdjust("pan", -SERVO_STEP_DEGREES)}
-              disabled={servoBusy}
+              onPressIn={() => startServoHold("pan", -SERVO_STEP_DEGREES)}
+              onPressOut={stopServoHold}
+              disabled={servoBusy && !servoHoldParamsRef.current}
             >
               <Ionicons name="chevron-back" size={24} color="#F9FAFB" />
             </TouchableOpacity>
@@ -1230,8 +1295,9 @@ export default function DeviceDetailScreen() {
                 styles.servoButtonRight,
                 servoBusy && styles.servoButtonDisabled,
               ]}
-              onPress={() => handleServoAdjust("pan", SERVO_STEP_DEGREES)}
-              disabled={servoBusy}
+              onPressIn={() => startServoHold("pan", SERVO_STEP_DEGREES)}
+              onPressOut={stopServoHold}
+              disabled={servoBusy && !servoHoldParamsRef.current}
             >
               <Ionicons name="chevron-forward" size={24} color="#F9FAFB" />
             </TouchableOpacity>
