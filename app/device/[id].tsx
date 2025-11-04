@@ -880,6 +880,14 @@ export default function DeviceDetailScreen() {
         command,
       });
 
+      // Persist immediately so leaving the screen does not revert to defaults
+      apiSetServoPosition(deviceId, {
+        pan: command.pan,
+        tilt: command.tilt,
+      }).catch((error) => {
+        console.warn("Failed to persist servo position", error);
+      });
+
       if (servoRestTimeoutRef.current) {
         clearTimeout(servoRestTimeoutRef.current);
       }
@@ -1066,10 +1074,6 @@ export default function DeviceDetailScreen() {
         }
         if (typeof state.tilt === "number") {
           setTiltAngle(clampServoValue("tilt", state.tilt));
-        }
-        if (state.recenter) {
-          setPanAngle(clampServoValue("pan", 90));
-          setTiltAngle(clampServoValue("tilt", 90));
         }
       } catch (error) {
         console.warn("Unable to fetch servo state", error);
