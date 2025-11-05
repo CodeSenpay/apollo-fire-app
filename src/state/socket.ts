@@ -58,6 +58,9 @@ const deriveDefaultSocketUrl = () => {
 
 const SOCKET_URL = (process.env.EXPO_PUBLIC_RELAY_SOCKET_URL || deriveDefaultSocketUrl()).replace(/\/$/, "");
 
+// Runtime supports boolean, but type definition expects object. Cast to keep boolean semantics.
+const DISABLE_PER_MESSAGE_DEFLATE = false as unknown as { threshold: number };
+
 let socket: Socket | null = null;
 let connecting = false;
 const activeSubscriptions = new Map<string, Partial<DeviceEventMap>>();
@@ -136,7 +139,8 @@ export const connectSocket = async () => {
   const [token, user] = await Promise.all([getAuthToken(), getUserData()]);
 
   socket = io(SOCKET_URL, {
-    transports: ["websocket"],
+    transports: ["polling", "websocket"],
+    perMessageDeflate: DISABLE_PER_MESSAGE_DEFLATE,
     auth: token ? { token } : undefined,
     query: user?.id ? { userId: user.id } : undefined,
   });

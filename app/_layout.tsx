@@ -11,6 +11,10 @@ import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { Alert, Platform } from "react-native";
 
+const logStreamError = (...args: unknown[]) => {
+  console.log("[StreamError]", ...args);
+};
+
 // Show notifications even when app is foregrounded
 Notifications.setNotificationHandler({
   handleNotification:
@@ -29,7 +33,7 @@ async function registerTokenWithAPI(token: string, userId: string) {
     await registerPushToken(token, userId);
     console.log("Successfully registered push notification token with API");
   } catch (error) {
-    console.error("Error registering push token with API:", error);
+    logStreamError("Error registering push token with API:", error);
   }
 }
 
@@ -70,7 +74,7 @@ export async function registerForPushNotificationsAsync(userId: string) {
       await registerTokenWithAPI(token, userId);
     }
   } catch (error) {
-    console.error(
+    logStreamError(
       "An error occurred during push notification registration:",
       error
     );
@@ -170,7 +174,7 @@ export default function RootLayout() {
             router.push({ pathname: "/device/[id]", params: { id: deviceId } });
           }
         } catch (error) {
-          console.warn("Failed to handle notification response:", error);
+          logStreamError("Failed to handle notification response:", error);
         }
       });
 

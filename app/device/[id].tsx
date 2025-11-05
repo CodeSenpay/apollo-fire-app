@@ -14,6 +14,7 @@ import {
   emitServoCommand,
   emitServoRecenter,
 } from "@/src/state/socket";
+import { logStreamError } from "@/src/utils/logger";
 import { Link, useLocalSearchParams, useNavigation } from "expo-router";
 import React, {
   useCallback,
@@ -47,6 +48,8 @@ const SERVO_STEP_DEGREES = 5;
 const SERVO_PAN_MAX_DEGREES = 180;
 const SERVO_TILT_MAX_DEGREES = 140;
 const SERVO_DEBUG_TAG = "[ServoClient]";
+const DEVICE_OFFLINE_MESSAGE = "Device is offline or stream unavailable.";
+const SUPPORTED_STREAM_PROTOCOLS = ["http://", "https://", "ws://", "wss://"] as const;
 
 const logServoClient = (...args: unknown[]) => {
   console.log(SERVO_DEBUG_TAG, ...args);
@@ -55,6 +58,13 @@ const logServoClient = (...args: unknown[]) => {
 const clampServoValue = (axis: "pan" | "tilt", value: number) => {
   const max = axis === "pan" ? SERVO_PAN_MAX_DEGREES : SERVO_TILT_MAX_DEGREES;
   return Math.min(max, Math.max(0, value));
+};
+
+const isSupportedStreamProtocol = (url: string | null | undefined) => {
+  if (!url) {
+    return false;
+  }
+  return SUPPORTED_STREAM_PROTOCOLS.some((protocol) => url.startsWith(protocol));
 };
 
 // Helper function to convert raw binary data to a base64 string
@@ -117,7 +127,7 @@ export default function DeviceDetailScreen() {
         recenter: `${base}/servo/recenter`,
       };
     } catch (error) {
-      console.warn("Failed to derive local servo endpoint from stream URL", error);
+      logStreamError("Failed to derive local servo endpoint from stream URL", error);
       return null;
     }
   }, [streamUrl]);
@@ -165,7 +175,7 @@ export default function DeviceDetailScreen() {
         });
         return true;
       } catch (error) {
-        console.warn("Local servo command failed", error);
+        logStreamError("Local servo command failed", error);
         logServoClient("Local servo command failed", {
           endpoint: localServoEndpoints?.command,
           error,
@@ -203,7 +213,7 @@ export default function DeviceDetailScreen() {
       });
       return true;
     } catch (error) {
-      console.warn("Local servo recenter failed", error);
+      logStreamError("Local servo recenter failed", error);
       logServoClient("Local servo recenter failed", {
         endpoint: localServoEndpoints?.recenter,
         error,
@@ -242,17 +252,27 @@ export default function DeviceDetailScreen() {
         
         if (dbStreamUrl) {
           console.log(`Stream URL from database (${mode} mode):`, dbStreamUrl);
-          setStreamUrl(dbStreamUrl);
-          setIsLoading(false);
+
+          if (isSupportedStreamProtocol(dbStreamUrl)) {
+            setStreamUrl(dbStreamUrl);
+            setStreamError(null);
+          } else {
+            logStreamError("Unsupported stream protocol received", dbStreamUrl);
+            setStreamUrl(null);
+            setStreamActive(false);
+            setStreamError(DEVICE_OFFLINE_MESSAGE);
+          }
         } else {
-          setStreamError(
-            `${mode === 'local' ? 'Local' : 'Relay'} stream not available. Device may be offline or not streaming.`
-          );
-          setIsLoading(false);
+          setStreamUrl(null);
+          setStreamActive(false);
+          setStreamError(DEVICE_OFFLINE_MESSAGE);
         }
+        setIsLoading(false);
       } catch (e: any) {
-        console.error('Error fetching stream URL:', e);
-        setStreamError(e.message || 'Failed to fetch stream URL');
+        logStreamError('Error fetching stream URL:', e);
+        setStreamUrl(null);
+        setStreamActive(false);
+        setStreamError(DEVICE_OFFLINE_MESSAGE);
         setIsLoading(false);
       }
     },
@@ -440,7 +460,7 @@ export default function DeviceDetailScreen() {
         lastProcessedMessageRef.current = now;
         performanceRef.current.totalFrames++;
       } catch (error) {
-        console.error("Error processing frame:", error);
+        logStreamError("Error processing frame:", error);
       }
     }
 
@@ -499,7 +519,7 @@ export default function DeviceDetailScreen() {
   // Auto-reconnect function
   const attemptReconnect = useCallback(() => {
     if (reconnectAttempts.current >= maxReconnectAttempts) {
-      setStreamError("Max reconnection attempts reached. Please refresh.");
+      setStreamError(DEVICE_OFFLINE_MESSAGE);
       return;
     }
 
@@ -520,8 +540,11 @@ export default function DeviceDetailScreen() {
   }, [streamUrl, currentMode, getStreamUrl]);
 
   useEffect(() => {
-    if (!streamUrl) {
+    if (!streamUrl || !isSupportedStreamProtocol(streamUrl)) {
       ws.current?.close();
+      setStreamActive(false);
+      setStreamError((prev) => prev ?? DEVICE_OFFLINE_MESSAGE);
+      setIsLoading(false);
       return;
     }
 
@@ -569,14 +592,14 @@ export default function DeviceDetailScreen() {
         ws.current.binaryType = "arraybuffer";
         console.log("[WebSocket] Instance created, waiting for connection...");
       } catch (error) {
-        console.error("[WebSocket] Failed to create instance:", error);
-        setStreamError(`Failed to create WebSocket: ${error}`);
+        logStreamError("[WebSocket] Failed to create instance:", error);
+        setStreamError(DEVICE_OFFLINE_MESSAGE);
         setIsLoading(false);
         return;
       }
 
       ws.current.onopen = () => {
-        console.log("[WebSocket] ✅ CONNECTED! Ready to receive frames");
+        console.log("[WebSocket] CONNECTED! Ready to receive frames");
         setIsLoading(false);
         setStreamError(null);
         reconnectAttempts.current = 0; // Reset on successful connection
@@ -607,18 +630,13 @@ export default function DeviceDetailScreen() {
       };
 
       ws.current.onerror = (error) => {
-        console.error("[WebSocket] ❌ ERROR:", JSON.stringify(error));
-        console.error("[WebSocket] Error details:", {
-          message: (error as any)?.message,
-          type: (error as any)?.type,
-          target: (error as any)?.target?.url
-        });
-        setStreamError(`Connection error: ${(error as any)?.message || 'Network error'}`);
+        logStreamError("[WebSocket] ERROR:", error);
+        setStreamError(DEVICE_OFFLINE_MESSAGE);
         setIsLoading(false);
       };
 
       ws.current.onclose = (event) => {
-        console.log("[WebSocket] ❌ CLOSED:", {
+        console.log("[WebSocket] CLOSED:", {
           code: event.code,
           reason: event.reason,
           wasClean: event.wasClean,
@@ -640,7 +658,7 @@ export default function DeviceDetailScreen() {
 
         if (event.code !== 1000) {
           // Not a normal closure
-          setStreamError("Connection lost. Attempting to reconnect...");
+          setStreamError(DEVICE_OFFLINE_MESSAGE);
           attemptReconnect();
         }
       };
@@ -667,7 +685,7 @@ export default function DeviceDetailScreen() {
             processMessageQueue();
           }
         } catch (error) {
-          console.error("Error queuing frame:", error);
+          logStreamError("Error queuing frame:", error);
           performanceRef.current.droppedFrames++;
         }
       };
@@ -711,11 +729,11 @@ export default function DeviceDetailScreen() {
               };
               reader.readAsDataURL(blob);
             } else {
-              console.warn("HTTP polling failed:", response.status);
+              logStreamError("HTTP polling failed:", response.status);
             }
           } catch (error) {
-            console.error("HTTP polling error:", error);
-            setStreamError("Failed to fetch relay stream");
+            logStreamError("HTTP polling error:", error);
+            setStreamError(DEVICE_OFFLINE_MESSAGE);
           }
         }, Math.max(FRAME_INTERVAL, 100)); // Poll at frame rate, minimum 100ms
       };
