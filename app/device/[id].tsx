@@ -1,7 +1,6 @@
 import {
   getRelayStreamUrl,
   requestStream,
-  setStreamMode,
   setServoPosition as apiSetServoPosition,
   recenterServo as apiRecenterServo,
   getServoState,
@@ -112,7 +111,32 @@ export default function DeviceDetailScreen() {
   const [servoSequence, setServoSequence] = useState<number>(0);
   const [servoBusy, setServoBusy] = useState(false);
 
+  const [orientation, setOrientation] = useState<{
+    rotation: 0 | 90 | 180 | 270;
+    flipHorizontal: boolean;
+    flipVertical: boolean;
+  }>({ rotation: 0, flipHorizontal: false, flipVertical: false });
+  const [servoControlTab, setServoControlTab] = useState<
+    "panTilt" | "orientation"
+  >("panTilt");
+
+  const orientationTransforms = useMemo(() => {
+    const transforms: any[] = [];
+    if (orientation.rotation !== 0) {
+      transforms.push({ rotate: `${orientation.rotation}deg` });
+    }
+    if (orientation.flipHorizontal) {
+      transforms.push({ scaleX: -1 });
+    }
+    if (orientation.flipVertical) {
+      transforms.push({ scaleY: -1 });
+    }
+    return transforms;
+  }, [orientation]);
+
   const httpPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const panAngleRef = useRef<number>(90);
+  const tiltAngleRef = useRef<number>(90);
 
   const localServoEndpoints = useMemo(() => {
     if (!streamUrl || !streamUrl.startsWith("ws")) {
@@ -221,6 +245,139 @@ export default function DeviceDetailScreen() {
       return false;
     }
   }, [localServoEndpoints, currentMode]);
+
+  const sendServoCommand = useCallback(
+    async (payload: { pan?: number; tilt?: number }) => {
+      if (!deviceId) return;
+
+      const success = await sendServoCommandLocal(payload);
+      if (!success) {
+        emitServoCommand(deviceId, payload);
+      }
+    },
+    [deviceId, sendServoCommandLocal]
+  );
+
+  const handleServoCommand = useCallback(
+    async (payload: { pan?: number; tilt?: number }) => {
+      if (servoBusyRef.current) {
+        latestServoCommandRef.current = payload;
+        return;
+      }
+
+      servoBusyRef.current = true;
+      setServoBusy(true);
+      try {
+        await sendServoCommand(payload);
+      } finally {
+        servoRestTimeoutRef.current = setTimeout(() => {
+          servoBusyRef.current = false;
+          setServoBusy(false);
+          if (latestServoCommandRef.current.pan !== undefined || latestServoCommandRef.current.tilt !== undefined) {
+            const pending = { ...latestServoCommandRef.current };
+            latestServoCommandRef.current = {};
+            handleServoCommand(pending);
+          }
+        }, SERVO_REST_FALLBACK_DELAY_MS);
+      }
+    },
+    [sendServoCommand]
+  );
+
+  const scheduleServoMove = useCallback(
+    (payload: { pan?: number; tilt?: number }) => {
+      const nextPayload: { pan?: number; tilt?: number } = {};
+
+      if (payload.pan !== undefined) {
+        const clampedPan = clampServoValue("pan", payload.pan);
+        panAngleRef.current = clampedPan;
+        setPanAngle(clampedPan);
+        nextPayload.pan = clampedPan;
+      }
+
+      if (payload.tilt !== undefined) {
+        const clampedTilt = clampServoValue("tilt", payload.tilt);
+        tiltAngleRef.current = clampedTilt;
+        setTiltAngle(clampedTilt);
+        nextPayload.tilt = clampedTilt;
+      }
+
+      if (!nextPayload.pan && !nextPayload.tilt) {
+        return;
+      }
+
+      handleServoCommand(nextPayload);
+    },
+    [handleServoCommand]
+  );
+
+  const startServoHold = useCallback(
+    (axis: "pan" | "tilt", delta: number) => {
+      servoHoldParamsRef.current = { axis, delta };
+
+      const currentPan = panAngleRef.current ?? 90;
+      const currentTilt = tiltAngleRef.current ?? 90;
+      const initialPayload =
+        axis === "pan"
+          ? { pan: currentPan + delta }
+          : { tilt: currentTilt + delta };
+
+      scheduleServoMove(initialPayload);
+
+      if (servoHoldIntervalRef.current) {
+        clearInterval(servoHoldIntervalRef.current);
+      }
+
+      servoHoldIntervalRef.current = setInterval(() => {
+        const params = servoHoldParamsRef.current;
+        if (!params) return;
+
+        const livePan = panAngleRef.current ?? 90;
+        const liveTilt = tiltAngleRef.current ?? 90;
+
+        const nextPayload =
+          params.axis === "pan"
+            ? { pan: livePan + params.delta }
+            : { tilt: liveTilt + params.delta };
+
+        scheduleServoMove(nextPayload);
+      }, SERVO_HOLD_INTERVAL_MS);
+    },
+    [scheduleServoMove]
+  );
+
+  const stopServoHold = useCallback(() => {
+    servoHoldParamsRef.current = null;
+    if (servoHoldIntervalRef.current) {
+      clearInterval(servoHoldIntervalRef.current);
+      servoHoldIntervalRef.current = null;
+    }
+  }, []);
+
+  const handleRecenterServos = useCallback(async () => {
+    if (!deviceId) return;
+
+    if (servoBusyRef.current) {
+      return;
+    }
+
+    servoBusyRef.current = true;
+    setServoBusy(true);
+
+    try {
+      const success = await sendServoRecenterLocal();
+      if (!success) {
+        await emitServoRecenter(deviceId);
+      }
+    } finally {
+      setPanAngle(90);
+      setTiltAngle(90);
+      servoRestTimeoutRef.current = setTimeout(() => {
+        servoBusyRef.current = false;
+        setServoBusy(false);
+      }, SERVO_REST_FALLBACK_DELAY_MS);
+    }
+  }, [deviceId, sendServoRecenterLocal]);
 
   useEffect(() => {
     navigation.setOptions({
@@ -345,22 +502,29 @@ export default function DeviceDetailScreen() {
           if (sequence >= servoSequence) {
             setServoSequence(sequence);
             if (typeof pan === "number") {
-              setPanAngle(clampServoValue("pan", pan));
+              const clampedPan = clampServoValue("pan", pan);
+              panAngleRef.current = clampedPan;
+              setPanAngle(clampedPan);
             }
             if (typeof tilt === "number") {
-              setTiltAngle(clampServoValue("tilt", tilt));
+              const clampedTilt = clampServoValue("tilt", tilt);
+              tiltAngleRef.current = clampedTilt;
+              setTiltAngle(clampedTilt);
             }
           }
         },
         servoRecenter: ({ pan, tilt, sequence }) => {
           if (sequence >= servoSequence) {
             setServoSequence(sequence);
-            setPanAngle(
+            const clampedPan =
               typeof pan === "number"
                 ? clampServoValue("pan", pan)
-                : clampServoValue("pan", 90)
-            );
-            setTiltAngle(clampServoValue("tilt", tilt ?? 90));
+                : clampServoValue("pan", 90);
+            const clampedTilt = clampServoValue("tilt", tilt ?? 90);
+            panAngleRef.current = clampedPan;
+            tiltAngleRef.current = clampedTilt;
+            setPanAngle(clampedPan);
+            setTiltAngle(clampedTilt);
           }
         },
       });
@@ -765,25 +929,12 @@ export default function DeviceDetailScreen() {
     };
   }, [streamUrl, currentMode]);
 
-  const handleModeSwitch = (mode: "local" | "relay") => {
-    if (deviceId) {
-      // Reset performance metrics on mode switch
-      performanceRef.current = { droppedFrames: 0, totalFrames: 0 };
-      reconnectAttempts.current = 0;
-      setStreamMode(deviceId, mode);
-    }
-  };
-
   const renderContent = () => {
     if (isLoading) {
       return (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color="#3B82F6" />
-          <Text style={styles.loadingText}>
-            {currentMode === "local"
-              ? "Connecting to device..."
-              : "Connecting to relay..."}
-          </Text>
+          <Text style={styles.loadingText}>Connecting to stream...</Text>
         </View>
       );
     }
@@ -807,325 +958,63 @@ export default function DeviceDetailScreen() {
       return (
         <View style={styles.offline}>
           <Text style={styles.offlineText}>NO STREAM AVAILABLE</Text>
-          <Text style={styles.errorText}>
-            {currentMode === "local"
-              ? "Device is not streaming locally"
-              : "Relay stream not available"}
-          </Text>
+          <Text style={styles.errorText}>Stream not available</Text>
         </View>
       );
     }
 
     return (
-      <>
-        <Image
-          source={frameA ? { uri: frameA } : undefined}
-          style={[
-            StyleSheet.absoluteFill,
-            { opacity: activeFrame === "A" ? 1 : 0 },
-          ]}
-          fadeDuration={0} // remove built in fade to avoid visual flicker
-          onLoadEnd={() => {
-            // mark buffer A loaded
-            loadedARef.current = true;
-            // only schedule swap for A if this buffer is most recent
-            if (bufferARef.current && bufferARef.current === frameA) {
-              scheduleSwapIfReady("A");
-            }
-          }}
-          onError={(error) => {
-            console.error("Image load error for frame A:", error);
-            loadedARef.current = false;
-          }}
-          resizeMode="cover"
-        />
-        <Image
-          source={frameB ? { uri: frameB } : undefined}
-          style={[
-            StyleSheet.absoluteFill,
-            { opacity: activeFrame === "B" ? 1 : 0 },
-          ]}
-          fadeDuration={0}
-          onLoadEnd={() => {
-            loadedBRef.current = true;
-            if (bufferBRef.current && bufferBRef.current === frameB) {
-              scheduleSwapIfReady("B");
-            }
-          }}
-          onError={(error) => {
-            console.error("Image load error for frame B:", error);
-            loadedBRef.current = false;
-          }}
-          resizeMode="cover"
-        />
-      </>
-    );
-  };
-
-  const handleServoPositionChange = useCallback(
-    (axis: "pan" | "tilt", value: number) => {
-      if (!deviceId) return;
-
-      const clampedValue = clampServoValue(axis, value);
-      const nextPan = axis === "pan" ? clampedValue : panAngle;
-      const nextTilt = axis === "tilt" ? clampedValue : tiltAngle;
-
-      logServoClient("handleServoPositionChange", {
-        deviceId,
-        axis,
-        value: clampedValue,
-        nextPan,
-        nextTilt,
-      });
-
-      if (axis === "pan") {
-        setPanAngle(clampedValue);
-      } else {
-        setTiltAngle(clampedValue);
-      }
-
-      const command: { pan?: number; tilt?: number } = {};
-      if (typeof nextPan === "number") {
-        command.pan = nextPan;
-      }
-      if (typeof nextTilt === "number") {
-        command.tilt = nextTilt;
-      }
-
-      latestServoCommandRef.current = command;
-      logServoClient("Queued servo command", {
-        deviceId,
-        command,
-      });
-
-      // Persist immediately so leaving the screen does not revert to defaults
-      apiSetServoPosition(deviceId, {
-        pan: command.pan,
-        tilt: command.tilt,
-      }).catch((error) => {
-        console.warn("Failed to persist servo position", error);
-      });
-
-      if (servoRestTimeoutRef.current) {
-        clearTimeout(servoRestTimeoutRef.current);
-      }
-
-      servoRestTimeoutRef.current = setTimeout(async () => {
-        servoRestTimeoutRef.current = null;
-        try {
-          setServoBusy(true);
-          const commandPayload = latestServoCommandRef.current;
-          let dispatched = false;
-
-          if (await sendServoCommandLocal(commandPayload)) {
-            dispatched = true;
-          }
-
-          if (!dispatched) {
-            try {
-              logServoClient("Sending servo command via WebSocket", {
-                deviceId,
-                command: commandPayload,
-              });
-              await emitServoCommand(deviceId, commandPayload);
-              dispatched = true;
-            } catch (wsError) {
-              console.warn("WebSocket servo command failed, falling back to HTTP API", wsError);
-              logServoClient("WebSocket servo command failed", {
-                deviceId,
-                command: commandPayload,
-                error: wsError,
-              });
-            }
-          }
-
-          if (!dispatched) {
-            try {
-              logServoClient("Sending servo command via HTTP fallback", {
-                deviceId,
-                command: commandPayload,
-              });
-              await apiSetServoPosition(deviceId, {
-                pan: commandPayload.pan,
-                tilt: commandPayload.tilt,
-              });
-              dispatched = true;
-            } catch (httpError) {
-              console.error("Failed to set servo position via HTTP", httpError);
-              logServoClient("HTTP servo command failed", {
-                deviceId,
-                command: commandPayload,
-                error: httpError,
-              });
-            }
-          }
-        } catch (wsError) {
-          console.error("Unexpected error dispatching servo command", wsError);
-        } finally {
-          logServoClient("Servo command dispatch complete", {
-            deviceId,
-            command: latestServoCommandRef.current,
-          });
-          setServoBusy(false);
-        }
-      }, SERVO_REST_FALLBACK_DELAY_MS);
-    },
-    [deviceId, panAngle, tiltAngle]
-  );
-
-  const handleServoAdjust = useCallback(
-    (axis: "pan" | "tilt", delta: number) => {
-      const current = axis === "pan" ? panAngle ?? 90 : tiltAngle ?? 90;
-      const next = clampServoValue(axis, current + delta);
-      if (next === current) {
-        return;
-      }
-      logServoClient("handleServoAdjust", {
-        axis,
-        delta,
-        current,
-        next,
-      });
-      handleServoPositionChange(axis, next);
-    },
-    [handleServoPositionChange, panAngle, tiltAngle]
-  );
-
-  const handleServoAdjustRef = useRef(handleServoAdjust);
-
-  useEffect(() => {
-    handleServoAdjustRef.current = handleServoAdjust;
-  }, [handleServoAdjust]);
-
-  useEffect(() => {
-    servoBusyRef.current = servoBusy;
-    if (!servoBusy && servoHoldParamsRef.current) {
-      const { axis, delta } = servoHoldParamsRef.current;
-      handleServoAdjustRef.current(axis, delta);
-    }
-  }, [servoBusy]);
-
-  const stopServoHold = useCallback(() => {
-    if (servoHoldIntervalRef.current) {
-      clearInterval(servoHoldIntervalRef.current);
-      servoHoldIntervalRef.current = null;
-    }
-    servoHoldParamsRef.current = null;
-  }, []);
-
-  const startServoHold = useCallback(
-    (axis: "pan" | "tilt", delta: number) => {
-      stopServoHold();
-      servoHoldParamsRef.current = { axis, delta };
-      const attemptAdjust = () => {
-        if (servoBusyRef.current) {
-          return;
-        }
-        handleServoAdjustRef.current(axis, delta);
-      };
-      attemptAdjust();
-      servoHoldIntervalRef.current = setInterval(() => {
-        attemptAdjust();
-      }, SERVO_HOLD_INTERVAL_MS);
-    },
-    [stopServoHold]
-  );
-
-  useEffect(() => {
-    return () => {
-      stopServoHold();
-    };
-  }, [stopServoHold]);
-
-  const handleRecenterServos = useCallback(async () => {
-    if (!deviceId) return;
-    setServoBusy(true);
-    try {
-      if (await sendServoRecenterLocal()) {
-        return;
-      }
-
-      logServoClient("Requesting servo recenter via WebSocket", { deviceId });
-      await emitServoRecenter(deviceId);
-    } catch (wsError) {
-      console.warn("WebSocket servo recenter failed, falling back to HTTP API", wsError);
-      logServoClient("WebSocket servo recenter failed", {
-        deviceId,
-        error: wsError,
-      });
-      // Fallback to HTTP API only if WebSocket fails
-      try {
-        logServoClient("Requesting servo recenter via HTTP fallback", {
-          deviceId,
-        });
-        await apiRecenterServo(deviceId);
-      } catch (httpError) {
-        console.error("Failed to recenter servos via HTTP", httpError);
-        logServoClient("HTTP servo recenter failed", {
-          deviceId,
-          error: httpError,
-        });
-      }
-    } finally {
-      logServoClient("Servo recenter request complete", { deviceId });
-      setServoBusy(false);
-    }
-  }, [deviceId]);
-
-  useEffect(() => {
-    if (!deviceId) return;
-
-    let cancelled = false;
-
-    const loadServoState = async () => {
-      try {
-        logServoClient("Fetching servo state", { deviceId });
-        const state: ServoState | null = await getServoState(deviceId);
-        if (!state || cancelled) return;
-        logServoClient("Received servo state", {
-          deviceId,
-          state,
-        });
-        setServoSequence(state.sequence);
-        if (typeof state.pan === "number") {
-          setPanAngle(clampServoValue("pan", state.pan));
-        }
-        if (typeof state.tilt === "number") {
-          setTiltAngle(clampServoValue("tilt", state.tilt));
-        }
-      } catch (error) {
-        console.warn("Unable to fetch servo state", error);
-      }
-    };
-
-    loadServoState();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [deviceId]);
-
-  const renderStreamBadge = () => {
-    if (isLoading) {
-      return null;
-    }
-    return (
-      <View
-        style={[
-          styles.streamBadge,
-          streamActive ? styles.streamBadgeActive : styles.streamBadgeInactive,
-        ]}
-      >
-        <Text
-          style={[
-            styles.streamBadgeText,
-            streamActive
-              ? styles.streamBadgeTextActive
-              : styles.streamBadgeTextInactive,
-          ]}
-        >
-          {streamActive ? "LIVE" : "OFFLINE"}
-        </Text>
+      <View style={styles.streamContainer}>
+        <View style={styles.frameContainer}>
+          {frameA && (
+            <Animated.View
+              style={[
+                styles.frameWrapper,
+                activeFrame === "A" && styles.frameActive,
+              ]}
+            >
+              <Image
+                source={{ uri: frameA }}
+                style={[styles.frameImage, { transform: orientationTransforms }]}
+                resizeMode="contain"
+                onLoad={() => {
+                  loadedARef.current = true;
+                  if (bufferARef.current && bufferARef.current === frameA) {
+                    scheduleSwapIfReady("A");
+                  }
+                }}
+                onError={(error) => {
+                  console.error("Image load error for frame A:", error);
+                  loadedARef.current = false;
+                }}
+              />
+            </Animated.View>
+          )}
+          {frameB && (
+            <Animated.View
+              style={[
+                styles.frameWrapper,
+                activeFrame === "B" && styles.frameActive,
+              ]}
+            >
+              <Image
+                source={{ uri: frameB }}
+                style={[styles.frameImage, { transform: orientationTransforms }]}
+                resizeMode="contain"
+                onLoad={() => {
+                  loadedBRef.current = true;
+                  if (bufferBRef.current && bufferBRef.current === frameB) {
+                    scheduleSwapIfReady("B");
+                  }
+                }}
+                onError={(error) => {
+                  console.error("Image load error for frame B:", error);
+                  loadedBRef.current = false;
+                }}
+              />
+            </Animated.View>
+          )}
+        </View>
       </View>
     );
   };
@@ -1156,7 +1045,6 @@ export default function DeviceDetailScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.videoWrap}>
-        {renderStreamBadge()}
         {renderContent()}
         {renderServoNotice()}
 
@@ -1237,105 +1125,212 @@ export default function DeviceDetailScreen() {
           </View>
         )}
       </View>
-      <View style={styles.selectorContainer}>
+      <View style={styles.servoTabContainer}>
         <TouchableOpacity
-          style={[
-            styles.selectorButton,
-            currentMode === "local" && styles.selectorActive,
-          ]}
-          onPress={() => handleModeSwitch("local")}
+          style={
+            servoControlTab === "panTilt"
+              ? styles.servoTabButtonActive
+              : styles.servoTabButton
+          }
+          onPress={() => setServoControlTab("panTilt")}
         >
           <Text
-            style={[
-              styles.selectorText,
-              currentMode === "local" && styles.selectorTextActive,
-            ]}
+            style={
+              servoControlTab === "panTilt"
+                ? styles.servoTabTextActive
+                : styles.servoTabText
+            }
           >
-            Local
+            Pan & Tilt
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[
-            styles.selectorButton,
-            currentMode === "relay" && styles.selectorActive,
-          ]}
-          onPress={() => handleModeSwitch("relay")}
+          style={
+            servoControlTab === "orientation"
+              ? styles.servoTabButtonActive
+              : styles.servoTabButton
+          }
+          onPress={() => setServoControlTab("orientation")}
         >
           <Text
-            style={[
-              styles.selectorText,
-              currentMode === "relay" && styles.selectorTextActive,
-            ]}
+            style={
+              servoControlTab === "orientation"
+                ? styles.servoTabTextActive
+                : styles.servoTabText
+            }
           >
-            Relay
+            Orientation
           </Text>
         </TouchableOpacity>
       </View>
       <View style={styles.servoCard}>
-        <Text style={styles.servoTitle}>Pan / Tilt Control</Text>
-        <View style={styles.servoCircularWrapper}>
-          <View style={styles.servoCircle}>
-            <TouchableOpacity
-              style={[
-                styles.servoDirectionalButton,
-                styles.servoButtonTop,
-                servoBusy && styles.servoButtonDisabled,
-              ]}
-              onPressIn={() => startServoHold("tilt", -SERVO_STEP_DEGREES)}
-              onPressOut={stopServoHold}
-              disabled={servoBusy && !servoHoldParamsRef.current}
-            >
-              <Ionicons name="chevron-up" size={24} color="#F9FAFB" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.servoDirectionalButton,
-                styles.servoButtonBottom,
-                servoBusy && styles.servoButtonDisabled,
-              ]}
-              onPressIn={() => startServoHold("tilt", SERVO_STEP_DEGREES)}
-              onPressOut={stopServoHold}
-              disabled={servoBusy && !servoHoldParamsRef.current}
-            >
-              <Ionicons name="chevron-down" size={24} color="#F9FAFB" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.servoDirectionalButton,
-                styles.servoButtonLeft,
-                servoBusy && styles.servoButtonDisabled,
-              ]}
-              onPressIn={() => startServoHold("pan", -SERVO_STEP_DEGREES)}
-              onPressOut={stopServoHold}
-              disabled={servoBusy && !servoHoldParamsRef.current}
-            >
-              <Ionicons name="chevron-back" size={24} color="#F9FAFB" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.servoDirectionalButton,
-                styles.servoButtonRight,
-                servoBusy && styles.servoButtonDisabled,
-              ]}
-              onPressIn={() => startServoHold("pan", SERVO_STEP_DEGREES)}
-              onPressOut={stopServoHold}
-              disabled={servoBusy && !servoHoldParamsRef.current}
-            >
-              <Ionicons name="chevron-forward" size={24} color="#F9FAFB" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.servoCenterButton, servoBusy && styles.servoButtonDisabled]}
-              onPress={handleRecenterServos}
-              disabled={servoBusy}
-            >
-              <Ionicons name="stop-circle" size={24} color="#1F2937" />
-            </TouchableOpacity>
+        <Text style={styles.servoTitle}>
+          {servoControlTab === "orientation"
+            ? "Orientation Controls"
+            : "Pan / Tilt Control"}
+        </Text>
+
+        {servoControlTab === "orientation" ? (
+          <View style={styles.servoOrientationSection}>
+            <View style={styles.orientationRow}>
+              {[0, 90, 180, 270].map((angle) => (
+                <TouchableOpacity
+                  key={angle}
+                  style={
+                    orientation.rotation === angle
+                      ? styles.orientationButtonActive
+                      : styles.orientationButton
+                  }
+                  onPress={() =>
+                    setOrientation((prev) => ({
+                      ...prev,
+                      rotation: angle as 0 | 90 | 180 | 270,
+                    }))
+                  }
+                >
+                  <Text
+                    style={
+                      orientation.rotation === angle
+                        ? styles.orientationButtonTextActive
+                        : styles.orientationButtonText
+                    }
+                  >
+                    {angle}°
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <View style={styles.orientationRow}>
+              <TouchableOpacity
+                style={
+                  orientation.flipHorizontal
+                    ? styles.orientationButtonActive
+                    : styles.orientationButton
+                }
+                onPress={() =>
+                  setOrientation((prev) => ({
+                    ...prev,
+                    flipHorizontal: !prev.flipHorizontal,
+                  }))
+                }
+              >
+                <Text
+                  style={
+                    orientation.flipHorizontal
+                      ? styles.orientationButtonTextActive
+                      : styles.orientationButtonText
+                  }
+                >
+                  Flip X
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={
+                  orientation.flipVertical
+                    ? styles.orientationButtonActive
+                    : styles.orientationButton
+                }
+                onPress={() =>
+                  setOrientation((prev) => ({
+                    ...prev,
+                    flipVertical: !prev.flipVertical,
+                  }))
+                }
+              >
+                <Text
+                  style={
+                    orientation.flipVertical
+                      ? styles.orientationButtonTextActive
+                      : styles.orientationButtonText
+                  }
+                >
+                  Flip Y
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.orientationReset}
+                onPress={() =>
+                  setOrientation({
+                    rotation: 0,
+                    flipHorizontal: false,
+                    flipVertical: false,
+                  })
+                }
+              >
+                <Text style={styles.orientationResetText}>Reset</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        </View>
-        <View style={styles.servoReadoutRow}>
-          <Text style={styles.servoReadout}>Pan: {Math.round(panAngle ?? 90)}°</Text>
-          <Text style={styles.servoReadout}>Tilt: {Math.round(tiltAngle ?? 90)}°</Text>
-        </View>
+        ) : (
+          <>
+            <View style={styles.servoCircularWrapper}>
+              <View style={styles.servoCircle}>
+                <TouchableOpacity
+                  style={[
+                    styles.servoDirectionalButton,
+                    styles.servoButtonTop,
+                    servoBusy && styles.servoButtonDisabled,
+                  ]}
+                  onPressIn={() => startServoHold("tilt", -SERVO_STEP_DEGREES)}
+                  onPressOut={stopServoHold}
+                  disabled={servoBusy && !servoHoldParamsRef.current}
+                >
+                  <Ionicons name="chevron-up" size={24} color="#F9FAFB" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.servoDirectionalButton,
+                    styles.servoButtonBottom,
+                    servoBusy && styles.servoButtonDisabled,
+                  ]}
+                  onPressIn={() => startServoHold("tilt", SERVO_STEP_DEGREES)}
+                  onPressOut={stopServoHold}
+                  disabled={servoBusy && !servoHoldParamsRef.current}
+                >
+                  <Ionicons name="chevron-down" size={24} color="#F9FAFB" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.servoDirectionalButton,
+                    styles.servoButtonLeft,
+                    servoBusy && styles.servoButtonDisabled,
+                  ]}
+                  onPressIn={() => startServoHold("pan", -SERVO_STEP_DEGREES)}
+                  onPressOut={stopServoHold}
+                  disabled={servoBusy && !servoHoldParamsRef.current}
+                >
+                  <Ionicons name="chevron-back" size={24} color="#F9FAFB" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.servoDirectionalButton,
+                    styles.servoButtonRight,
+                    servoBusy && styles.servoButtonDisabled,
+                  ]}
+                  onPressIn={() => startServoHold("pan", SERVO_STEP_DEGREES)}
+                  onPressOut={stopServoHold}
+                  disabled={servoBusy && !servoHoldParamsRef.current}
+                >
+                  <Ionicons name="chevron-forward" size={24} color="#F9FAFB" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.servoCenterButton,
+                    servoBusy && styles.servoButtonDisabled,
+                  ]}
+                  onPress={handleRecenterServos}
+                  disabled={servoBusy}
+                >
+                  <Ionicons name="stop-circle" size={24} color="#1F2937" />
+                </TouchableOpacity>
+              </View>
+            </View>
+            <View style={styles.servoReadoutRow}>
+              <Text style={styles.servoReadout}>Pan: {Math.round(panAngle ?? 90)}°</Text>
+              <Text style={styles.servoReadout}>Tilt: {Math.round(tiltAngle ?? 90)}°</Text>
+            </View>
+          </>
+        )}
       </View>
     </SafeAreaView>
   );
@@ -1397,6 +1392,82 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     marginBottom: 16,
   },
+  streamContainer: {
+    flex: 1,
+  },
+  servoOrientationSection: {
+    alignSelf: "flex-start",
+    width: "100%",
+    marginBottom: 16,
+  },
+  servoOrientationTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#111827",
+  },
+  orientationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    marginTop: 8,
+  },
+  orientationButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    marginRight: 8,
+    borderRadius: 6,
+    backgroundColor: "#E5E7EB",
+    alignItems: "center",
+  },
+  orientationButtonActive: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    marginRight: 8,
+    borderRadius: 6,
+    backgroundColor: "#3B82F6",
+    alignItems: "center",
+  },
+  orientationButtonText: {
+    color: "#1F2937",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  orientationButtonTextActive: {
+    color: "#F9FAFB",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  orientationReset: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    backgroundColor: "#E5E7EB",
+  },
+  orientationResetText: {
+    color: "#1F2937",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  frameContainer: {
+    flex: 1,
+    flexDirection: "row",
+    position: "relative",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  frameWrapper: {
+    ...StyleSheet.absoluteFillObject,
+    opacity: 0,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  frameActive: {
+    opacity: 1,
+  },
+  frameImage: {
+    width: "100%",
+    height: "100%",
+  },
   centered: {
     flex: 1,
     justifyContent: "center",
@@ -1421,23 +1492,9 @@ const styles = StyleSheet.create({
   },
   errorText: { marginTop: 8, color: "#F3F4F6", textAlign: "center" },
   card: {
-    backgroundColor: "#FFFFFF",
-    padding: 16,
-    borderRadius: 12,
-    shadowColor: "#000",
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-    marginTop: 16,
-  },
-  row: {
     flexDirection: "row",
+    alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 12,
-  },
-  criticalRow: {
-    borderTopWidth: 1,
-    borderTopColor: "#E5E7EB",
     paddingTop: 8,
     marginTop: 4,
   },
@@ -1565,6 +1622,40 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#111827",
     marginBottom: 12,
+  },
+  servoTabContainer: {
+    flexDirection: "row",
+    backgroundColor: "#E5E7EB",
+    borderRadius: 8,
+    padding: 4,
+    marginBottom: 16,
+  },
+  servoTabButton: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 6,
+    alignItems: "center",
+  },
+  servoTabButtonActive: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 6,
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  servoTabText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#4B5563",
+  },
+  servoTabTextActive: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#1F2937",
   },
   servoRow: {
     flexDirection: "row",
