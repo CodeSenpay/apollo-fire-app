@@ -34,6 +34,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import type { ImageStyle } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 const STREAM_RETRY_INTERVAL_MS = 5000;
@@ -134,9 +135,54 @@ export default function DeviceDetailScreen() {
     return transforms;
   }, [orientation]);
 
-  const httpPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const orientationStyle = useMemo<ImageStyle | null>(() => {
+    if (orientationTransforms.length === 0) {
+      return null;
+    }
+    return { transform: orientationTransforms };
+  }, [orientationTransforms]);
+
   const panAngleRef = useRef<number>(90);
   const tiltAngleRef = useRef<number>(90);
+
+  useEffect(() => {
+    if (!deviceId) return;
+
+    let cancelled = false;
+
+    const loadServoState = async () => {
+      try {
+        const state = await getServoState(deviceId);
+        if (!state || cancelled) {
+          return;
+        }
+
+        const { pan, tilt } = state;
+
+        if (typeof pan === "number") {
+          const clampedPan = clampServoValue("pan", pan);
+          panAngleRef.current = clampedPan;
+          setPanAngle(clampedPan);
+        }
+
+        if (typeof tilt === "number") {
+          const clampedTilt = clampServoValue("tilt", tilt);
+          tiltAngleRef.current = clampedTilt;
+          setTiltAngle(clampedTilt);
+        }
+      } catch (error) {
+        logStreamError("Failed to load servo state", error);
+      }
+    };
+
+    loadServoState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [deviceId]);
+
+  const httpPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const localServoEndpoints = useMemo(() => {
     if (!streamUrl || !streamUrl.startsWith("ws")) {
@@ -287,22 +333,23 @@ export default function DeviceDetailScreen() {
   const scheduleServoMove = useCallback(
     (payload: { pan?: number; tilt?: number }) => {
       const nextPayload: { pan?: number; tilt?: number } = {};
+      const { pan, tilt } = payload;
 
-      if (payload.pan !== undefined) {
-        const clampedPan = clampServoValue("pan", payload.pan);
+      if (typeof pan === "number") {
+        const clampedPan = clampServoValue("pan", pan);
         panAngleRef.current = clampedPan;
         setPanAngle(clampedPan);
         nextPayload.pan = clampedPan;
       }
 
-      if (payload.tilt !== undefined) {
-        const clampedTilt = clampServoValue("tilt", payload.tilt);
+      if (typeof tilt === "number") {
+        const clampedTilt = clampServoValue("tilt", tilt);
         tiltAngleRef.current = clampedTilt;
         setTiltAngle(clampedTilt);
         nextPayload.tilt = clampedTilt;
       }
 
-      if (!nextPayload.pan && !nextPayload.tilt) {
+      if (!("pan" in nextPayload) && !("tilt" in nextPayload)) {
         return;
       }
 
@@ -965,56 +1012,46 @@ export default function DeviceDetailScreen() {
 
     return (
       <View style={styles.streamContainer}>
-        <View style={styles.frameContainer}>
-          {frameA && (
-            <Animated.View
-              style={[
-                styles.frameWrapper,
-                activeFrame === "A" && styles.frameActive,
-              ]}
-            >
-              <Image
-                source={{ uri: frameA }}
-                style={[styles.frameImage, { transform: orientationTransforms }]}
-                resizeMode="contain"
-                onLoad={() => {
-                  loadedARef.current = true;
-                  if (bufferARef.current && bufferARef.current === frameA) {
-                    scheduleSwapIfReady("A");
-                  }
-                }}
-                onError={(error) => {
-                  console.error("Image load error for frame A:", error);
-                  loadedARef.current = false;
-                }}
-              />
-            </Animated.View>
-          )}
-          {frameB && (
-            <Animated.View
-              style={[
-                styles.frameWrapper,
-                activeFrame === "B" && styles.frameActive,
-              ]}
-            >
-              <Image
-                source={{ uri: frameB }}
-                style={[styles.frameImage, { transform: orientationTransforms }]}
-                resizeMode="contain"
-                onLoad={() => {
-                  loadedBRef.current = true;
-                  if (bufferBRef.current && bufferBRef.current === frameB) {
-                    scheduleSwapIfReady("B");
-                  }
-                }}
-                onError={(error) => {
-                  console.error("Image load error for frame B:", error);
-                  loadedBRef.current = false;
-                }}
-              />
-            </Animated.View>
-          )}
-        </View>
+        <Image
+          source={frameA ? { uri: frameA } : undefined}
+          style={[
+            StyleSheet.absoluteFill,
+            orientationStyle,
+            { opacity: activeFrame === "A" ? 1 : 0 },
+          ]}
+          fadeDuration={0}
+          resizeMode="contain"
+          onLoadEnd={() => {
+            loadedARef.current = true;
+            if (bufferARef.current && bufferARef.current === frameA) {
+              scheduleSwapIfReady("A");
+            }
+          }}
+          onError={(error) => {
+            console.error("Image load error for frame A:", error);
+            loadedARef.current = false;
+          }}
+        />
+        <Image
+          source={frameB ? { uri: frameB } : undefined}
+          style={[
+            StyleSheet.absoluteFill,
+            orientationStyle,
+            { opacity: activeFrame === "B" ? 1 : 0 },
+          ]}
+          fadeDuration={0}
+          resizeMode="contain"
+          onLoadEnd={() => {
+            loadedBRef.current = true;
+            if (bufferBRef.current && bufferBRef.current === frameB) {
+              scheduleSwapIfReady("B");
+            }
+          }}
+          onError={(error) => {
+            console.error("Image load error for frame B:", error);
+            loadedBRef.current = false;
+          }}
+        />
       </View>
     );
   };
