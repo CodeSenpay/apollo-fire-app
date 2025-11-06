@@ -1,19 +1,17 @@
 import {
   getRelayStreamUrl,
-  requestStream,
-  setServoPosition as apiSetServoPosition,
-  recenterServo as apiRecenterServo,
   getServoState,
-  ServoState,
+  requestStream,
+  setServoPosition
 } from "@/src/services/apiConfig";
 import {
   connectSocket,
+  emitServoCommand,
   subscribeToDevice,
   unsubscribeFromDevice,
-  emitServoCommand,
-  emitServoRecenter,
 } from "@/src/state/socket";
 import { logStreamError } from "@/src/utils/logger";
+import { Ionicons } from "@expo/vector-icons";
 import { Link, useLocalSearchParams, useNavigation } from "expo-router";
 import React, {
   useCallback,
@@ -22,9 +20,9 @@ import React, {
   useRef,
   useState,
 } from "react";
+import type { ImageStyle } from "react-native";
 import {
   ActivityIndicator,
-  Animated,
   Dimensions,
   Image,
   Pressable,
@@ -32,10 +30,8 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
-  View,
+  View
 } from "react-native";
-import type { ImageStyle } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
 
 const STREAM_RETRY_INTERVAL_MS = 5000;
 const MAX_RECONNECT_ATTEMPTS = 5;
@@ -194,7 +190,6 @@ export default function DeviceDetailScreen() {
       const base = `${url.protocol}//${url.host}`;
       return {
         command: `${base}/servo`,
-        recenter: `${base}/servo/recenter`,
       };
     } catch (error) {
       logStreamError("Failed to derive local servo endpoint from stream URL", error);
@@ -256,48 +251,20 @@ export default function DeviceDetailScreen() {
     [localServoEndpoints, currentMode]
   );
 
-  const sendServoRecenterLocal = useCallback(async () => {
-    if (!localServoEndpoints || currentMode !== "local") {
-      return false;
-    }
-
-    try {
-      logServoClient("Requesting servo recenter via local HTTP", {
-        endpoint: localServoEndpoints.recenter,
-      });
-
-      const response = await fetch(localServoEndpoints.recenter, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
-      }
-
-      logServoClient("Local servo recenter succeeded", {
-        endpoint: localServoEndpoints.recenter,
-      });
-      return true;
-    } catch (error) {
-      logStreamError("Local servo recenter failed", error);
-      logServoClient("Local servo recenter failed", {
-        endpoint: localServoEndpoints?.recenter,
-        error,
-      });
-      return false;
-    }
-  }, [localServoEndpoints, currentMode]);
-
   const sendServoCommand = useCallback(
     async (payload: { pan?: number; tilt?: number }) => {
       if (!deviceId) return;
 
       const success = await sendServoCommandLocal(payload);
-      if (!success) {
+      if (success) {
+        // Persist the servo state to backend DB after successful local command
+        try {
+          await setServoPosition(deviceId, { ...payload, persistOnly: true });
+        } catch (error) {
+          logStreamError("Failed to persist servo state to backend", error);
+        }
+      } else {
+        // Fall back to relay/socket command
         emitServoCommand(deviceId, payload);
       }
     },
@@ -400,31 +367,6 @@ export default function DeviceDetailScreen() {
       servoHoldIntervalRef.current = null;
     }
   }, []);
-
-  const handleRecenterServos = useCallback(async () => {
-    if (!deviceId) return;
-
-    if (servoBusyRef.current) {
-      return;
-    }
-
-    servoBusyRef.current = true;
-    setServoBusy(true);
-
-    try {
-      const success = await sendServoRecenterLocal();
-      if (!success) {
-        await emitServoRecenter(deviceId);
-      }
-    } finally {
-      setPanAngle(90);
-      setTiltAngle(90);
-      servoRestTimeoutRef.current = setTimeout(() => {
-        servoBusyRef.current = false;
-        setServoBusy(false);
-      }, SERVO_REST_FALLBACK_DELAY_MS);
-    }
-  }, [deviceId, sendServoRecenterLocal]);
 
   useEffect(() => {
     navigation.setOptions({
@@ -558,20 +500,6 @@ export default function DeviceDetailScreen() {
               tiltAngleRef.current = clampedTilt;
               setTiltAngle(clampedTilt);
             }
-          }
-        },
-        servoRecenter: ({ pan, tilt, sequence }) => {
-          if (sequence >= servoSequence) {
-            setServoSequence(sequence);
-            const clampedPan =
-              typeof pan === "number"
-                ? clampServoValue("pan", pan)
-                : clampServoValue("pan", 90);
-            const clampedTilt = clampServoValue("tilt", tilt ?? 90);
-            panAngleRef.current = clampedPan;
-            tiltAngleRef.current = clampedTilt;
-            setPanAngle(clampedPan);
-            setTiltAngle(clampedTilt);
           }
         },
       });
@@ -1056,22 +984,6 @@ export default function DeviceDetailScreen() {
     );
   };
 
-  const renderServoNotice = () => {
-    if (streamActive || streamError) {
-      return null;
-    }
-    if (servoSequence === 0) {
-      return (
-        <View style={styles.servoNotice}>
-          <Text style={styles.servoNoticeText}>
-            Waiting for servo connection. Verify device control socket credentials and hardware power.
-          </Text>
-        </View>
-      );
-    }
-    return null;
-  };
-
   if (!deviceId)
     return (
       <SafeAreaView style={styles.container}>
@@ -1083,7 +995,6 @@ export default function DeviceDetailScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.videoWrap}>
         {renderContent()}
-        {renderServoNotice()}
 
         {showPerformance && (
           <View style={styles.performanceOverlay}>
@@ -1349,16 +1260,6 @@ export default function DeviceDetailScreen() {
                   disabled={servoBusy && !servoHoldParamsRef.current}
                 >
                   <Ionicons name="chevron-forward" size={24} color="#F9FAFB" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.servoCenterButton,
-                    servoBusy && styles.servoButtonDisabled,
-                  ]}
-                  onPress={handleRecenterServos}
-                  disabled={servoBusy}
-                >
-                  <Ionicons name="stop-circle" size={24} color="#1F2937" />
                 </TouchableOpacity>
               </View>
             </View>

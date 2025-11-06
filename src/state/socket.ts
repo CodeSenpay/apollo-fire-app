@@ -36,13 +36,6 @@ type DeviceEventMap = {
     sequence: number;
     updatedAt: number;
   }) => void;
-  servoRecenter: (payload: {
-    deviceId: string;
-    pan: number;
-    tilt: number;
-    sequence: number;
-    updatedAt: number;
-  }) => void;
 };
 
 type DeviceEvents = keyof DeviceEventMap;
@@ -331,10 +324,3 @@ export const emitServoCommand = async (
   activeSocket.emit("servoCommand", command);
 };
 
-export const emitServoRecenter = async (deviceId: string) => {
-  if (!deviceId) return;
-
-  const activeSocket = await ensureSocket();
-
-  activeSocket.emit("servoRecenter", { deviceId });
-};
