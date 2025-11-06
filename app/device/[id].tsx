@@ -368,6 +368,32 @@ export default function DeviceDetailScreen() {
     }
   }, []);
 
+  const handleRecenter = useCallback(async () => {
+    if (!deviceId || servoBusyRef.current) return;
+
+    servoBusyRef.current = true;
+    setServoBusy(true);
+
+    try {
+      // Reset to center position
+      const centerPayload = { pan: 90, tilt: 90 };
+      
+      // Update local state immediately for UI responsiveness
+      panAngleRef.current = 90;
+      tiltAngleRef.current = 90;
+      setPanAngle(90);
+      setTiltAngle(90);
+
+      // Send command to device
+      await sendServoCommand(centerPayload);
+    } finally {
+      servoRestTimeoutRef.current = setTimeout(() => {
+        servoBusyRef.current = false;
+        setServoBusy(false);
+      }, SERVO_REST_FALLBACK_DELAY_MS);
+    }
+  }, [deviceId, sendServoCommand]);
+
   useEffect(() => {
     navigation.setOptions({
       title: `Device: ${deviceId?.slice(0, 12)}...`,
@@ -1267,6 +1293,17 @@ export default function DeviceDetailScreen() {
               <Text style={styles.servoReadout}>Pan: {Math.round(panAngle ?? 90)}°</Text>
               <Text style={styles.servoReadout}>Tilt: {Math.round(tiltAngle ?? 90)}°</Text>
             </View>
+            <TouchableOpacity
+              style={[
+                styles.recenterButton,
+                servoBusy && styles.recenterButtonDisabled,
+              ]}
+              onPress={handleRecenter}
+              disabled={servoBusy}
+            >
+              <Ionicons name="locate" size={18} color="#FFFFFF" />
+              <Text style={styles.recenterButtonText}>Recenter</Text>
+            </TouchableOpacity>
           </>
         )}
       </View>
@@ -1676,12 +1713,15 @@ const styles = StyleSheet.create({
     color: "#1F2937",
   },
   recenterButton: {
-    marginTop: 8,
-    alignSelf: "flex-end",
+    marginTop: 12,
+    alignSelf: "center",
     backgroundColor: "#3B82F6",
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
   },
   recenterButtonDisabled: {
     backgroundColor: "#93C5FD",
