@@ -39,8 +39,9 @@ const MONITOR_INTERVAL = 1000;
 const PERFORMANCE_SAMPLE_WINDOW_MS = 5000;
 const STREAM_REFRESH_INTERVAL_MS = 30000;
 const SERVO_REST_FALLBACK_DELAY_MS = 120;
-const SERVO_HOLD_INTERVAL_MS = 150;
-const SERVO_STEP_DEGREES = 5;
+const SERVO_HOLD_INTERVAL_MS = 80;
+const SERVO_STEP_DEGREES = 3;
+const SERVO_PERSIST_THROTTLE_MS = 500;
 const SERVO_PAN_MAX_DEGREES = 180;
 const SERVO_TILT_MAX_DEGREES = 140;
 const SERVO_DEBUG_TAG = "[ServoClient]";
@@ -106,7 +107,10 @@ export default function DeviceDetailScreen() {
   const [panAngle, setPanAngle] = useState<number | null>(null);
   const [tiltAngle, setTiltAngle] = useState<number | null>(null);
   const [servoSequence, setServoSequence] = useState<number>(0);
+  const servoBusyRef = useRef(false);
   const [servoBusy, setServoBusy] = useState(false);
+  const servoHoldActiveRef = useRef(false);
+  const persistThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [orientation, setOrientation] = useState<{
     rotation: 0 | 90 | 180 | 270;
@@ -251,47 +255,64 @@ export default function DeviceDetailScreen() {
     [localServoEndpoints, currentMode]
   );
 
-  const sendServoCommand = useCallback(
+  const throttledPersist = useCallback(
     async (payload: { pan?: number; tilt?: number }) => {
       if (!deviceId) return;
-
-      const success = await sendServoCommandLocal(payload);
-      if (success) {
-        // Persist the servo state to backend DB after successful local command
+      
+      if (persistThrottleRef.current) {
+        clearTimeout(persistThrottleRef.current);
+      }
+      
+      persistThrottleRef.current = setTimeout(async () => {
         try {
           await setServoPosition(deviceId, { ...payload, persistOnly: true });
         } catch (error) {
           logStreamError("Failed to persist servo state to backend", error);
+        }
+      }, SERVO_PERSIST_THROTTLE_MS);
+    },
+    [deviceId]
+  );
+
+  const sendServoCommand = useCallback(
+    async (payload: { pan?: number; tilt?: number }, skipPersist = false) => {
+      if (!deviceId) return;
+
+      const success = await sendServoCommandLocal(payload);
+      if (success) {
+        // Throttle backend persistence for continuous movements
+        if (!skipPersist) {
+          throttledPersist(payload);
         }
       } else {
         // Fall back to relay/socket command
         emitServoCommand(deviceId, payload);
       }
     },
-    [deviceId, sendServoCommandLocal]
+    [deviceId, sendServoCommandLocal, throttledPersist]
   );
 
   const handleServoCommand = useCallback(
-    async (payload: { pan?: number; tilt?: number }) => {
-      if (servoBusyRef.current) {
-        latestServoCommandRef.current = payload;
+    async (payload: { pan?: number; tilt?: number }, isHoldMove = false) => {
+      // Allow continuous hold movements to bypass busy check
+      if (!isHoldMove && servoBusyRef.current) {
         return;
       }
 
-      servoBusyRef.current = true;
-      setServoBusy(true);
+      if (!isHoldMove) {
+        servoBusyRef.current = true;
+        setServoBusy(true);
+      }
+
       try {
-        await sendServoCommand(payload);
+        await sendServoCommand(payload, isHoldMove);
       } finally {
-        servoRestTimeoutRef.current = setTimeout(() => {
-          servoBusyRef.current = false;
-          setServoBusy(false);
-          if (latestServoCommandRef.current.pan !== undefined || latestServoCommandRef.current.tilt !== undefined) {
-            const pending = { ...latestServoCommandRef.current };
-            latestServoCommandRef.current = {};
-            handleServoCommand(pending);
-          }
-        }, SERVO_REST_FALLBACK_DELAY_MS);
+        if (!isHoldMove) {
+          servoRestTimeoutRef.current = setTimeout(() => {
+            servoBusyRef.current = false;
+            setServoBusy(false);
+          }, SERVO_REST_FALLBACK_DELAY_MS);
+        }
       }
     },
     [sendServoCommand]
@@ -320,31 +341,33 @@ export default function DeviceDetailScreen() {
         return;
       }
 
-      handleServoCommand(nextPayload);
+      // Mark as hold move for smooth continuous operation
+      handleServoCommand(nextPayload, servoHoldActiveRef.current);
     },
     [handleServoCommand]
   );
 
   const startServoHold = useCallback(
     (axis: "pan" | "tilt", delta: number) => {
+      if (servoHoldParamsRef.current) {
+        return;
+      }
+
+      servoHoldActiveRef.current = true;
       servoHoldParamsRef.current = { axis, delta };
 
-      const currentPan = panAngleRef.current ?? 90;
-      const currentTilt = tiltAngleRef.current ?? 90;
       const initialPayload =
         axis === "pan"
-          ? { pan: currentPan + delta }
-          : { tilt: currentTilt + delta };
+          ? { pan: (panAngleRef.current ?? 90) + delta }
+          : { tilt: (tiltAngleRef.current ?? 90) + delta };
 
       scheduleServoMove(initialPayload);
 
-      if (servoHoldIntervalRef.current) {
-        clearInterval(servoHoldIntervalRef.current);
-      }
-
       servoHoldIntervalRef.current = setInterval(() => {
         const params = servoHoldParamsRef.current;
-        if (!params) return;
+        if (!params) {
+          return;
+        }
 
         const livePan = panAngleRef.current ?? 90;
         const liveTilt = tiltAngleRef.current ?? 90;
@@ -361,12 +384,27 @@ export default function DeviceDetailScreen() {
   );
 
   const stopServoHold = useCallback(() => {
+    servoHoldActiveRef.current = false;
     servoHoldParamsRef.current = null;
     if (servoHoldIntervalRef.current) {
       clearInterval(servoHoldIntervalRef.current);
       servoHoldIntervalRef.current = null;
     }
-  }, []);
+    
+    // Force final persist after hold ends
+    if (persistThrottleRef.current) {
+      clearTimeout(persistThrottleRef.current);
+      const finalPayload = {
+        pan: panAngleRef.current,
+        tilt: tiltAngleRef.current,
+      };
+      if (deviceId) {
+        setServoPosition(deviceId, { ...finalPayload, persistOnly: true }).catch((error) =>
+          logStreamError("Failed to persist final servo state", error)
+        );
+      }
+    }
+  }, [deviceId]);
 
   const handleRecenter = useCallback(async () => {
     if (!deviceId || servoBusyRef.current) return;
@@ -565,7 +603,6 @@ export default function DeviceDetailScreen() {
   const servoRestTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const servoHoldIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const servoHoldParamsRef = useRef<{ axis: "pan" | "tilt"; delta: number } | null>(null);
-  const servoBusyRef = useRef(false);
   const latestServoCommandRef = useRef<{ pan?: number; tilt?: number }>({});
   const messageQueueRef = useRef<ArrayBuffer[]>([]);
   const processingMessageRef = useRef(false);
