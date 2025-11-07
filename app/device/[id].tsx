@@ -34,7 +34,8 @@ import {
 } from "react-native";
 
 const STREAM_RETRY_INTERVAL_MS = 5000;
-const MAX_RECONNECT_ATTEMPTS = 5;
+const STREAM_RETRY_IDLE_BACKOFF_MS = 15000;
+const MAX_STREAM_RETRY_ATTEMPTS = 60;
 const MONITOR_INTERVAL = 1000;
 const PERFORMANCE_SAMPLE_WINDOW_MS = 5000;
 const STREAM_REFRESH_INTERVAL_MS = 30000;
@@ -83,11 +84,11 @@ export default function DeviceDetailScreen() {
   const navigation = useNavigation();
   const ws = useRef<WebSocket | null>(null);
   const loadTarget = useRef<"A" | "B">("B");
-  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+  const streamRetryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
-  const reconnectAttempts = useRef(0);
-  const maxReconnectAttempts = 5;
+  const streamRetryAttempts = useRef(0);
+  const currentModeRef = useRef<"local" | "relay">("local");
 
   // double buffer state for rendering
   const [frameA, setFrameA] = useState<string | null>(null);
@@ -99,6 +100,7 @@ export default function DeviceDetailScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [streamActive, setStreamActive] = useState(false);
+  const [streamConnectEpoch, setStreamConnectEpoch] = useState(0);
   const [currentMode, setCurrentMode] = useState<"local" | "relay">("local");
   const [showPerformance, setShowPerformance] = useState(false);
   const [streamQuality, setStreamQuality] = useState<"low" | "medium" | "high">(
@@ -183,6 +185,154 @@ export default function DeviceDetailScreen() {
   }, [deviceId]);
 
   const httpPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const clearStreamRetryTimer = useCallback(() => {
+    if (streamRetryTimeoutRef.current) {
+      clearTimeout(streamRetryTimeoutRef.current);
+      streamRetryTimeoutRef.current = null;
+    }
+  }, []);
+
+  const resetStreamRetryState = useCallback(() => {
+    streamRetryAttempts.current = 0;
+    clearStreamRetryTimer();
+  }, [clearStreamRetryTimer]);
+
+  type StreamLoadResult = { success: boolean; retryDelay?: number };
+
+  const loadStreamUrl = useCallback(
+    async (
+      mode: "local" | "relay",
+      options?: { silent?: boolean }
+    ): Promise<StreamLoadResult> => {
+      if (!deviceId) {
+        return { success: false, retryDelay: STREAM_RETRY_IDLE_BACKOFF_MS };
+      }
+
+      const silent = options?.silent ?? false;
+      if (!silent) {
+        setIsLoading(true);
+      }
+
+      try {
+        const dbStreamUrl = await getRelayStreamUrl(deviceId);
+
+        if (dbStreamUrl && isSupportedStreamProtocol(dbStreamUrl)) {
+          console.log(`Stream URL from database (${mode} mode):`, dbStreamUrl);
+          setStreamUrl(dbStreamUrl);
+          setStreamError(null);
+          return { success: true };
+        }
+
+        if (dbStreamUrl && !isSupportedStreamProtocol(dbStreamUrl)) {
+          logStreamError("Unsupported stream protocol received", dbStreamUrl);
+        }
+
+        setStreamUrl(null);
+        setStreamActive(false);
+        setStreamError(DEVICE_OFFLINE_MESSAGE);
+        return {
+          success: false,
+          retryDelay: STREAM_RETRY_IDLE_BACKOFF_MS,
+        };
+      } catch (error) {
+        logStreamError("Error fetching stream URL:", error);
+        setStreamUrl(null);
+        setStreamActive(false);
+        setStreamError(DEVICE_OFFLINE_MESSAGE);
+        return { success: false };
+      } finally {
+        if (!silent) {
+          setIsLoading(false);
+        }
+      }
+    },
+    [deviceId, resetStreamRetryState]
+  );
+
+  const scheduleStreamRetry = useCallback(
+    (delayOverride?: number) => {
+      if (!deviceId) {
+        return;
+      }
+
+      if (streamRetryAttempts.current >= MAX_STREAM_RETRY_ATTEMPTS) {
+        setStreamError(DEVICE_OFFLINE_MESSAGE);
+        setIsLoading(false);
+        clearStreamRetryTimer();
+        return;
+      }
+
+      const nextAttempt = streamRetryAttempts.current + 1;
+      streamRetryAttempts.current = nextAttempt;
+
+      setStreamError(null);
+      setIsLoading(true);
+      setStreamActive(false);
+      setFrameA(null);
+      setFrameB(null);
+      loadedARef.current = false;
+      loadedBRef.current = false;
+
+      const exponentialDelay = Math.min(
+        1000 * Math.pow(2, nextAttempt - 1),
+        STREAM_RETRY_INTERVAL_MS
+      );
+
+      const delay =
+        delayOverride !== undefined
+          ? delayOverride
+          : nextAttempt === 1
+          ? 0
+          : exponentialDelay;
+
+      clearStreamRetryTimer();
+
+      console.log(
+        `[StreamRetry] Attempt ${nextAttempt}/${MAX_STREAM_RETRY_ATTEMPTS} in ${delay}ms`
+      );
+
+      streamRetryTimeoutRef.current = setTimeout(() => {
+        streamRetryTimeoutRef.current = null;
+
+        requestStream(deviceId, true).catch((error) => {
+          logStreamError("Failed to request stream during retry", error);
+        });
+
+        loadStreamUrl(currentModeRef.current, { silent: true }).then((result) => {
+          if (!result.success) {
+            const nextDelay =
+              result.retryDelay ?? STREAM_RETRY_INTERVAL_MS;
+            scheduleStreamRetry(nextDelay);
+          }
+        });
+      }, delay);
+    },
+    [
+      clearStreamRetryTimer,
+      currentModeRef,
+      deviceId,
+      loadStreamUrl,
+      requestStream,
+    ]
+  );
+
+  const triggerStreamLoad = useCallback(
+    (mode: "local" | "relay", options?: { silent?: boolean }) => {
+      loadStreamUrl(mode, options).then((result) => {
+        if (result.success) {
+          setStreamConnectEpoch(Date.now());
+          return;
+        }
+
+        if (!result.success) {
+          const retryDelay = result.retryDelay ?? STREAM_RETRY_INTERVAL_MS;
+          scheduleStreamRetry(retryDelay);
+        }
+      });
+    },
+    [loadStreamUrl, scheduleStreamRetry]
+  );
 
   const localServoEndpoints = useMemo(() => {
     if (!streamUrl || !streamUrl.startsWith("ws")) {
@@ -449,56 +599,14 @@ export default function DeviceDetailScreen() {
     });
   }, [navigation, deviceId]);
 
-  const getStreamUrl = useCallback(
-    async (mode: "local" | "relay") => {
-      if (!deviceId) return;
-      setIsLoading(true);
-      setStreamError(null);
-      setStreamUrl(null);
-
-      try {
-        // Get stream URL from database for both local and relay modes
-        const dbStreamUrl = await getRelayStreamUrl(deviceId);
-        
-        if (dbStreamUrl) {
-          console.log(`Stream URL from database (${mode} mode):`, dbStreamUrl);
-
-          if (isSupportedStreamProtocol(dbStreamUrl)) {
-            setStreamUrl(dbStreamUrl);
-            setStreamError(null);
-          } else {
-            logStreamError("Unsupported stream protocol received", dbStreamUrl);
-            setStreamUrl(null);
-            setStreamActive(false);
-            setStreamError(DEVICE_OFFLINE_MESSAGE);
-          }
-        } else {
-          setStreamUrl(null);
-          setStreamActive(false);
-          setStreamError(DEVICE_OFFLINE_MESSAGE);
-        }
-        setIsLoading(false);
-      } catch (e: any) {
-        logStreamError('Error fetching stream URL:', e);
-        setStreamUrl(null);
-        setStreamActive(false);
-        setStreamError(DEVICE_OFFLINE_MESSAGE);
-        setIsLoading(false);
-      }
-    },
-    [deviceId]
-  );
-
   useEffect(() => {
     if (!deviceId) return;
 
     requestStream(deviceId, true);
+    triggerStreamLoad(currentModeRef.current);
 
     return () => {
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = null;
-      }
+      clearStreamRetryTimer();
       if (scheduledSwapRef.current) {
         clearTimeout(scheduledSwapRef.current);
         scheduledSwapRef.current = null;
@@ -520,11 +628,15 @@ export default function DeviceDetailScreen() {
       }
       if (deviceId) requestStream(deviceId, false);
     };
-  }, [deviceId]);
+  }, [clearStreamRetryTimer, deviceId, triggerStreamLoad]);
 
   useEffect(() => {
-    getStreamUrl(currentMode);
-  }, [currentMode, getStreamUrl]);
+    if (!deviceId) {
+      return;
+    }
+    currentModeRef.current = currentMode;
+    triggerStreamLoad(currentMode, { silent: true });
+  }, [currentMode, deviceId, triggerStreamLoad]);
 
   useEffect(() => {
     if (!deviceId) return;
@@ -718,35 +830,13 @@ export default function DeviceDetailScreen() {
     }, delay);
   }
 
-  // Auto-reconnect function
-  const attemptReconnect = useCallback(() => {
-    if (reconnectAttempts.current >= maxReconnectAttempts) {
-      setStreamError(DEVICE_OFFLINE_MESSAGE);
-      return;
-    }
-
-    reconnectAttempts.current++;
-    const delay = Math.min(
-      1000 * Math.pow(2, reconnectAttempts.current - 1),
-      10000
-    ); // Exponential backoff, max 10s
-
-    reconnectTimeoutRef.current = setTimeout(() => {
-      if (streamUrl && currentMode === "local") {
-        console.log(
-          `Reconnection attempt ${reconnectAttempts.current}/${maxReconnectAttempts}`
-        );
-        getStreamUrl(currentMode);
-      }
-    }, delay);
-  }, [streamUrl, currentMode, getStreamUrl]);
-
   useEffect(() => {
     if (!streamUrl || !isSupportedStreamProtocol(streamUrl)) {
       ws.current?.close();
       setStreamActive(false);
       setStreamError((prev) => prev ?? DEVICE_OFFLINE_MESSAGE);
       setIsLoading(false);
+      scheduleStreamRetry(STREAM_RETRY_IDLE_BACKOFF_MS);
       return;
     }
 
@@ -754,10 +844,7 @@ export default function DeviceDetailScreen() {
     if (ws.current) {
       ws.current.close();
     }
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = null;
-    }
+    clearStreamRetryTimer();
 
     let wsUrl: string;
     if (currentMode === "local") {
@@ -804,7 +891,7 @@ export default function DeviceDetailScreen() {
         console.log("[WebSocket] CONNECTED! Ready to receive frames");
         setIsLoading(false);
         setStreamError(null);
-        reconnectAttempts.current = 0; // Reset on successful connection
+        resetStreamRetryState();
         // reset buffers on fresh open
         bufferARef.current = null;
         bufferBRef.current = null;
@@ -834,7 +921,7 @@ export default function DeviceDetailScreen() {
       ws.current.onerror = (error) => {
         logStreamError("[WebSocket] ERROR:", error);
         setStreamError(DEVICE_OFFLINE_MESSAGE);
-        setIsLoading(false);
+        scheduleStreamRetry();
       };
 
       ws.current.onclose = (event) => {
@@ -861,7 +948,13 @@ export default function DeviceDetailScreen() {
         if (event.code !== 1000) {
           // Not a normal closure
           setStreamError(DEVICE_OFFLINE_MESSAGE);
-          attemptReconnect();
+          scheduleStreamRetry();
+          return;
+        }
+
+        if (streamRetryAttempts.current > 0) {
+          // Closure during ongoing retry sequence; attempt again
+          scheduleStreamRetry();
         }
       };
 
@@ -895,6 +988,7 @@ export default function DeviceDetailScreen() {
       // For HTTP relay streams - implement simple image polling
       setIsLoading(false);
       setStreamError(null);
+      resetStreamRetryState();
 
       // Start HTTP polling for relay mode
       const startHttpPolling = () => {
@@ -949,10 +1043,7 @@ export default function DeviceDetailScreen() {
         ws.current.close();
         ws.current = null;
       }
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = null;
-      }
+      clearStreamRetryTimer();
       if (httpPollingRef.current) {
         clearInterval(httpPollingRef.current);
         httpPollingRef.current = null;
@@ -965,7 +1056,7 @@ export default function DeviceDetailScreen() {
         frameProcessingTimeoutRef.current = null;
       }
     };
-  }, [streamUrl, currentMode]);
+  }, [streamUrl, currentMode, streamConnectEpoch]);
 
   const renderContent = () => {
     if (isLoading) {
@@ -984,7 +1075,7 @@ export default function DeviceDetailScreen() {
           <Text style={styles.errorText}>{streamError}</Text>
           <TouchableOpacity
             style={styles.retryButton}
-            onPress={() => getStreamUrl(currentMode)}
+            onPress={() => triggerStreamLoad(currentMode)}
           >
             <Text style={styles.retryButtonText}>Retry</Text>
           </TouchableOpacity>
