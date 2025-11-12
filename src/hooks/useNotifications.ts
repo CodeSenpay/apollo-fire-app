@@ -1,9 +1,14 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { registerPushToken } from '@/src/services/apiConfig';
+import {
+  NotificationPayload,
+  subscribeToNotifications,
+  unsubscribeFromNotifications,
+} from '@/src/state/socket';
 
 // Configure how notifications appear when the app is in the foreground
 Notifications.setNotificationHandler({
@@ -127,17 +132,40 @@ export const useNotifications = (userId?: string | null) => {
   };
 
   // Schedule a local notification
-  const scheduleLocalNotification = async (title: string, body: string, data = {}) => {
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title,
-        body,
-        data,
-        sound: 'default',
+  const scheduleLocalNotification = useMemo(
+    () =>
+      async (title: string, body: string, data: Record<string, unknown> = {}) => {
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title,
+            body,
+            data,
+            sound: 'default',
+          },
+          trigger: null, // Send immediately
+        });
       },
-      trigger: null, // Send immediately
-    });
-  };
+    []
+  );
+
+  const handleRealtimeNotification = useMemo(
+    () =>
+      ({ title, body, notificationType, deviceId }: NotificationPayload) => {
+        const safeTitle = title ?? 'Apollo Fire Alert';
+        const safeBody =
+          body ??
+          (notificationType === 'ml_alert'
+            ? 'Potential fire detected. Check device immediately.'
+            : 'You have a new notification.');
+
+        scheduleLocalNotification(safeTitle, safeBody, {
+          notificationType,
+          deviceId,
+          fallback: true,
+        });
+      },
+    [scheduleLocalNotification]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -162,6 +190,8 @@ export const useNotifications = (userId?: string | null) => {
 
     setupNotifications();
 
+    subscribeToNotifications(handleRealtimeNotification);
+
     // Clean up listeners on unmount
     return () => {
       cancelled = true;
@@ -171,8 +201,9 @@ export const useNotifications = (userId?: string | null) => {
       if (responseListener.current) {
         responseListener.current.remove();
       }
+      unsubscribeFromNotifications(handleRealtimeNotification);
     };
-  }, [userId]);
+  }, [userId, handleRealtimeNotification]);
 
   // Expose methods that can be used by components
   return {
