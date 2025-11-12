@@ -3,6 +3,7 @@ import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Link } from "expo-router";
 import * as React from "react";
 import { Pressable } from "react-native";
+import { APP_NAME } from "@/src/constants/branding";
 import CameraPage from "./camera";
 import HomePage from "./home";
 import NotificationsPage from "./notifications";
@@ -54,7 +55,7 @@ export default function Dashboard() {
           name="Home"
           component={HomeScreen}
           options={{
-            headerTitle: "Apollo Fire Overview",
+            headerTitle: `${APP_NAME} Overview`,
             headerShown: true,
             // The button has been removed from here
           }}

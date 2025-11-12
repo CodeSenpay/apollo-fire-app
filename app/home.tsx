@@ -16,6 +16,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { APP_NAME } from "@/src/constants/branding";
 
 interface QuickActionButtonProps {
   icon: keyof typeof Ionicons.glyphMap;
@@ -99,7 +100,7 @@ export default function HomePage() {
           <View style={styles.heroGlow} />
           <View style={styles.heroGlowSecondary} />
           <View style={styles.heroContent}>
-            <Text style={styles.heroBadge}>Apollo Fire</Text>
+            <Text style={styles.heroBadge}>{APP_NAME}</Text>
             <Text style={styles.heroTitle}>Stay ahead of potential fire hazards</Text>
             <Text style={styles.heroSubtitle}>
               Monitor every camera feed in real-time and receive AI-powered alerts before risks escalate.
@@ -167,7 +168,7 @@ export default function HomePage() {
             <View style={styles.emptyCard}>
               <Text style={styles.emptyTitle}>No devices claimed yet</Text>
               <Text style={styles.emptySubtitle}>
-                Link your Apollo hardware to start streaming camera feeds.
+                Link your {APP_NAME} hardware to start streaming camera feeds.
               </Text>
             </View>
           ) : (

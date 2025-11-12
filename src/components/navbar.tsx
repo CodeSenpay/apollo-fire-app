@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { APP_NAME } from "@/src/constants/branding";
 
 export default function Navbar() {
   return (
@@ -13,7 +14,7 @@ export default function Navbar() {
         style={{ width: 50, height: 50 }}
       />
       <Text className="text-xl font-extrabold text-red-700 tracking-wide">
-        Apollo Fire
+        {APP_NAME}
       </Text>
       <View className="flex-row gap-5">
         <Pressable

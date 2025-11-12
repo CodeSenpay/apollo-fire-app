@@ -9,6 +9,7 @@ import {
   subscribeToNotifications,
   unsubscribeFromNotifications,
 } from '@/src/state/socket';
+import { APP_ALERT_TITLE } from '@/src/constants/branding';
 
 // Configure how notifications appear when the app is in the foreground
 Notifications.setNotificationHandler({
@@ -150,13 +151,25 @@ export const useNotifications = (userId?: string | null) => {
 
   const handleRealtimeNotification = useMemo(
     () =>
-      ({ title, body, notificationType, deviceId }: NotificationPayload) => {
-        const safeTitle = title ?? 'Apollo Fire Alert';
+      ({
+        title,
+        body,
+        notificationType,
+        deviceId,
+        deliveryMethod,
+        deliveryMeta,
+      }: NotificationPayload) => {
+        const safeTitle = title ?? APP_ALERT_TITLE;
         const safeBody =
           body ??
           (notificationType === 'ml_alert'
             ? 'Potential fire detected. Check device immediately.'
             : 'You have a new notification.');
+
+        if (deliveryMethod === 'expo' && deliveryMeta?.expoDelivered) {
+          console.log('Skipping local notification; Expo delivery confirmed');
+          return;
+        }
 
         scheduleLocalNotification(safeTitle, safeBody, {
           notificationType,

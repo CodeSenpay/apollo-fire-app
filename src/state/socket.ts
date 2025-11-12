@@ -66,6 +66,12 @@ export type NotificationPayload = {
   body: string | null;
   notificationType: string | null;
   sentAt: string;
+  deliveryMethod?: 'expo' | 'local' | 'failed' | 'unknown';
+  deliveryMeta?: {
+    expoAttempted: boolean;
+    expoDelivered: boolean;
+    usedLocalFallback: boolean;
+  };
 };
 
 type NotificationHandler = (payload: NotificationPayload) => void;

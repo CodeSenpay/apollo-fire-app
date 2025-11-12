@@ -1,4 +1,5 @@
 import { loginAsGuest, loginWithEmail, signUpWithEmail } from "@/src/services/apiConfig";
+import { APP_NAME } from "@/src/constants/branding";
 import { useAuth } from "@/src/state/pinGate";
 import React, { useState } from "react";
 import { Alert, Image, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
@@ -62,7 +63,7 @@ export default function AuthScreen() {
         <View style={styles.logoContainer}>
           <Image source={require("../assets/images/icon.png")} style={styles.logo} />
         </View>
-        <Text style={styles.title}>Welcome to Apollo Fire</Text>
+        <Text style={styles.title}>Welcome to {APP_NAME}</Text>
         <TextInput
           placeholder="Email"
           style={styles.input}

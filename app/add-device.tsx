@@ -7,7 +7,16 @@ import { useRouter } from "expo-router";
 import jpeg from 'jpeg-js';
 import jsQR from 'jsqr';
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { 
+  ActivityIndicator,
+  Alert,
+  Linking,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import { APP_NAME } from "@/src/constants/branding";
 
 // Helper function to decode QR code from a base64 image string
 const decodeQrCode = (base64: string): string | null => {
@@ -156,7 +165,7 @@ export default function LinkDeviceScreen() {
         <View style={styles.layerRight} />
       </View>
       <View style={styles.layerBottom}>
-        <Text style={styles.text}>Scan your Apollo device QR code</Text>
+        <Text style={styles.text}>Scan your {APP_NAME} device QR code</Text>
 
         <TouchableOpacity 
           style={[styles.galleryButton, isProcessingGallery && styles.galleryButtonDisabled]} 
