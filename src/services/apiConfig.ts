@@ -207,7 +207,15 @@ export const getCurrentUser = async (): Promise<User | null> => {
 };
 
 // Device API calls
-export const getUserDevices = async (): Promise<string[]> => {
+export interface DeviceSummary {
+  id: string;
+  name: string;
+  status?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export const getUserDevices = async (): Promise<DeviceSummary[]> => {
   try {
     const user = await getUserData();
     if (!user) {
@@ -216,15 +224,21 @@ export const getUserDevices = async (): Promise<string[]> => {
     }
     console.log("Fetching devices for user:", user.id);
     const response = await axios.get(buildApiUrl(`/users/${user.id}/devices`));
-    
+
     console.log("API Response:", JSON.stringify(response.data, null, 2));
-    
+
     if (response.data.success && response.data.devices) {
-      const deviceIds = response.data.devices.map((device: any) => device.id);
-      console.log("Device IDs:", deviceIds);
-      return deviceIds;
+      const devices: DeviceSummary[] = response.data.devices.map((device: any) => ({
+        id: device.id,
+        name: device.name ?? `Device ${String(device.id).slice(0, 8)}`,
+        status: device.status,
+        createdAt: device.createdAt,
+        updatedAt: device.updatedAt,
+      }));
+      console.log("Devices:", devices);
+      return devices;
     }
-    
+
     console.log("No devices found or unsuccessful response");
     return [];
   } catch (error) {
@@ -235,6 +249,17 @@ export const getUserDevices = async (): Promise<string[]> => {
     }
     return [];
   }
+};
+
+export const renameDevice = async (deviceId: string, name: string): Promise<void> => {
+  const user = await getUserData();
+  if (!user?.id) {
+    throw new Error('Unable to rename device: user not authenticated');
+  }
+
+  await axios.put(buildApiUrl(`/users/${user.id}/devices/${deviceId}/name`), {
+    name,
+  });
 };
 
 export interface NotificationHistoryEntry {

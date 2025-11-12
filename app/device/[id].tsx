@@ -1,6 +1,7 @@
 import {
   getRelayStreamUrl,
   getServoState,
+  getUserDevices,
   requestStream,
   setServoPosition
 } from "@/src/services/apiConfig";
@@ -12,7 +13,7 @@ import {
 } from "@/src/state/socket";
 import { logStreamError } from "@/src/utils/logger";
 import { Ionicons } from "@expo/vector-icons";
-import { Link, useLocalSearchParams, useNavigation } from "expo-router";
+import { Link, useFocusEffect, useLocalSearchParams, useNavigation } from "expo-router";
 import React, {
   useCallback,
   useEffect,
@@ -80,7 +81,8 @@ function arrayBufferToBase64(buffer: ArrayBuffer) {
 // --- Main Component ---
 // Replace the existing DeviceDetailScreen component with this version
 export default function DeviceDetailScreen() {
-  const { id: deviceId } = useLocalSearchParams<{ id: string }>();
+  const { id: deviceId, name: initialNameParam } =
+    useLocalSearchParams<{ id: string; name?: string }>();
   const navigation = useNavigation();
   const ws = useRef<WebSocket | null>(null);
   const loadTarget = useRef<"A" | "B">("B");
@@ -113,6 +115,12 @@ export default function DeviceDetailScreen() {
   const [servoBusy, setServoBusy] = useState(false);
   const servoHoldActiveRef = useRef(false);
   const persistThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [deviceName, setDeviceName] = useState<string | null>(() => {
+    if (typeof initialNameParam === "string" && initialNameParam.trim()) {
+      return initialNameParam.trim();
+    }
+    return null;
+  });
 
   const [orientation, setOrientation] = useState<{
     rotation: 0 | 90 | 180 | 270;
@@ -582,22 +590,56 @@ export default function DeviceDetailScreen() {
     }
   }, [deviceId, sendServoCommand]);
 
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+
+      const refreshDeviceName = async () => {
+        if (!deviceId) {
+          return;
+        }
+
+        try {
+          const devices = await getUserDevices();
+          if (!isActive) {
+            return;
+          }
+
+          const match = devices.find((device) => device.id === deviceId);
+          const normalizedName = match?.name?.trim();
+          setDeviceName(normalizedName || null);
+        } catch (error) {
+          console.warn("Failed to refresh device name", error);
+        }
+      };
+
+      refreshDeviceName();
+
+      return () => {
+        isActive = false;
+      };
+    }, [deviceId])
+  );
+
   useEffect(() => {
+    if (!deviceId) {
+      return;
+    }
+
+    const shortId = deviceId.length > 12 ? `${deviceId.slice(0, 12)}...` : deviceId;
+    const displayName = deviceName?.trim() || shortId;
+
     navigation.setOptions({
-      title: `Device: ${deviceId?.slice(0, 12)}...`,
-      headerRight: () =>
-        deviceId ? (
-          <Link
-            href={{ pathname: "/device/settings", params: { id: deviceId } }}
-            asChild
-          >
-            <Pressable style={{ marginRight: 15 }}>
-              <Ionicons name="settings-outline" size={24} color="#1F2937" />
-            </Pressable>
-          </Link>
-        ) : null,
+      title: `Device: ${displayName}`,
+      headerRight: () => (
+        <Link href={{ pathname: "/device/settings", params: { id: deviceId } }} asChild>
+          <Pressable style={{ marginRight: 15 }}>
+            <Ionicons name="settings-outline" size={24} color="#1F2937" />
+          </Pressable>
+        </Link>
+      ),
     });
-  }, [navigation, deviceId]);
+  }, [navigation, deviceId, deviceName]);
 
   useEffect(() => {
     if (!deviceId) return;

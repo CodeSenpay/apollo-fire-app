@@ -1,4 +1,5 @@
 import {
+  DeviceSummary,
   NotificationHistoryEntry,
   getNotificationHistory,
   getUserDevices,
@@ -17,6 +18,23 @@ import {
   View,
 } from "react-native";
 import { APP_NAME } from "@/src/constants/branding";
+
+const formatDeviceStatus = (status?: string) => {
+  if (!status) {
+    return "Unknown";
+  }
+
+  switch (status) {
+    case "claimed":
+      return "Linked";
+    case "offline":
+      return "Offline";
+    case "waiting_for_claim":
+      return "Unclaimed";
+    default:
+      return status;
+  }
+};
 
 interface QuickActionButtonProps {
   icon: keyof typeof Ionicons.glyphMap;
@@ -39,15 +57,15 @@ export default function HomePage() {
   const router = useRouter();
   const navigation = useNavigation<any>();
 
-  const [deviceIds, setDeviceIds] = useState<string[]>([]);
+  const [devices, setDevices] = useState<DeviceSummary[]>([]);
   const [notifications, setNotifications] = useState<NotificationHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
-      const ids = await getUserDevices();
-      setDeviceIds(ids);
+      const deviceList = await getUserDevices();
+      setDevices(deviceList);
 
       const recentNotifications = await getNotificationHistory(3);
       setNotifications(recentNotifications);
@@ -127,7 +145,7 @@ export default function HomePage() {
           <Text style={styles.summaryTitle}>Network Overview</Text>
           <View style={styles.summaryGrid}>
             <View style={styles.summaryItem}>
-              <Text style={styles.summaryValue}>{deviceIds.length}</Text>
+              <Text style={styles.summaryValue}>{devices.length}</Text>
               <Text style={styles.summaryLabel}>Devices Linked</Text>
             </View>
             <View style={styles.summaryItem}>
@@ -164,7 +182,7 @@ export default function HomePage() {
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Registered Devices</Text>
-          {deviceIds.length === 0 && !loading ? (
+          {devices.length === 0 && !loading ? (
             <View style={styles.emptyCard}>
               <Text style={styles.emptyTitle}>No devices claimed yet</Text>
               <Text style={styles.emptySubtitle}>
@@ -172,19 +190,35 @@ export default function HomePage() {
               </Text>
             </View>
           ) : (
-            deviceIds.map((id) => (
-              <View key={id} style={styles.deviceCard}>
-                <View style={styles.deviceCardHeader}>
-                  <Text style={styles.deviceCardTitle}>{id}</Text>
-                  <Text style={styles.deviceCardBadge}>Streaming Ready</Text>
-                </View>
-                <View style={styles.deviceDescriptionWrapper}>
-                  <Text style={styles.deviceDescription}>
-                    Tap the device to open its live camera stream and manage connection mode.
-                  </Text>
-                </View>
-              </View>
-            ))
+            devices.map((device) => {
+              const statusLabel = formatDeviceStatus(device.status);
+              const isOffline = statusLabel === "Offline";
+              return (
+                <TouchableOpacity
+                  key={device.id}
+                  style={styles.deviceCard}
+                  activeOpacity={0.85}
+                  onPress={() =>
+                    router.push({ pathname: "/device/[id]", params: { id: device.id, name: device.name } })
+                  }
+                >
+                  <View style={styles.deviceCardHeader}>
+                    <Text style={styles.deviceCardTitle}>{device.name}</Text>
+                    <Text
+                      style={[styles.deviceCardBadge, isOffline && styles.deviceCardBadgeCritical]}
+                    >
+                      {statusLabel}
+                    </Text>
+                  </View>
+                  <View style={styles.deviceDescriptionWrapper}>
+                    <Text style={styles.deviceCardId}>{device.id}</Text>
+                    <Text style={styles.deviceDescription}>
+                      Tap the device to open its live camera stream and manage connection mode.
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })
           )}
         </View>
 
@@ -493,19 +527,23 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   deviceCardTitle: {
-    fontSize: 15,
+    fontSize: 18,
     fontWeight: "700",
-    color: "#0f172a",
+    color: "#111827",
+  },
+  deviceCardId: {
+    fontSize: 13,
+    color: "#6b7280",
+    marginBottom: 4,
   },
   deviceCardBadge: {
+    paddingVertical: 4,
+    paddingHorizontal: 12,
     fontSize: 12,
     fontWeight: "600",
     color: "#16a34a",
     backgroundColor: "rgba(22,163,74,0.12)",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
     borderRadius: 12,
-    textTransform: "uppercase",
     letterSpacing: 0.5,
   },
   deviceCardBadgeCritical: {

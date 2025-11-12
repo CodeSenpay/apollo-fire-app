@@ -1,19 +1,14 @@
-import { getDeviceDetails, getUserDevices } from '@/src/services/apiConfig';
+import { DeviceSummary, getUserDevices } from '@/src/services/apiConfig';
 import { useAuth } from '@/src/state/pinGate';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import { ActivityIndicator, FlatList, RefreshControl, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-interface DeviceInfo {
-  id: string;
-  name: string;
-}
-
 export default function DeviceListScreen() {
   const { user } = useAuth();
   const router = useRouter();
-  const [devices, setDevices] = useState<DeviceInfo[]>([]);
+  const [devices, setDevices] = useState<DeviceSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -28,24 +23,17 @@ export default function DeviceListScreen() {
     console.log('User:', JSON.stringify(user, null, 2));
     
     try {
-      const deviceIds = await getUserDevices();
-      console.log('Received device IDs:', deviceIds);
+      const fetchedDevices = await getUserDevices();
+      console.log('Received devices:', fetchedDevices);
       
-      if (deviceIds.length === 0) {
+      if (fetchedDevices.length === 0) {
         console.log('No devices found for user');
         setDevices([]);
         return;
       }
 
-      // For now, just use device IDs without fetching details
-      // since getDeviceDetails might not be migrated yet
-      const devicesWithDetails = deviceIds.map(id => ({
-        id,
-        name: `Device ${id.slice(0, 8)}`
-      }));
-      
-      console.log('Setting devices:', devicesWithDetails);
-      setDevices(devicesWithDetails);
+      console.log('Setting devices:', fetchedDevices);
+      setDevices(fetchedDevices);
     } catch (error) {
       console.error('Error fetching devices:', error);
       setDevices([]);

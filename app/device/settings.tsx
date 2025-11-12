@@ -3,15 +3,18 @@ import {
   resetDevice,
   getUserData,
   getDeviceDetails,
+  getUserDevices,
+  renameDevice,
   setStreamMode,
 } from '@/src/services/apiConfig';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   SafeAreaView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -24,6 +27,9 @@ export default function DeviceSettingsScreen() {
   const [streamMode, setStreamModeState] = useState<'local' | 'relay'>('local');
   const [modeLoading, setModeLoading] = useState(true);
   const [modeSaving, setModeSaving] = useState(false);
+  const [deviceName, setDeviceName] = useState('');
+  const [nameInput, setNameInput] = useState('');
+  const [nameSaving, setNameSaving] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -35,10 +41,28 @@ export default function DeviceSettingsScreen() {
     const loadDeviceSettings = async () => {
       setModeLoading(true);
       try {
-        const details = await getDeviceDetails(deviceId);
-        const mode = details?.streamMode;
-        if (isMounted && (mode === 'local' || mode === 'relay')) {
-          setStreamModeState(mode);
+        const [details, userDevices] = await Promise.allSettled([
+          getDeviceDetails(deviceId),
+          getUserDevices(),
+        ]);
+
+        if (isMounted && details.status === 'fulfilled') {
+          const mode = details.value?.streamMode;
+          if (mode === 'local' || mode === 'relay') {
+            setStreamModeState(mode);
+          }
+        }
+
+        if (isMounted && userDevices.status === 'fulfilled') {
+          const target = userDevices.value.find((device) => device.id === deviceId);
+          if (target) {
+            setDeviceName(target.name);
+            setNameInput(target.name);
+          }
+        }
+
+        if (isMounted && userDevices.status === 'rejected' && details.status === 'rejected') {
+          console.warn('Failed to load device settings metadata');
         }
       } catch (error) {
         console.warn('Failed to load device details for settings', error);
@@ -55,6 +79,28 @@ export default function DeviceSettingsScreen() {
       isMounted = false;
     };
   }, [deviceId]);
+
+  const isNameDirty = useMemo(() => {
+    return nameInput.trim() !== deviceName.trim();
+  }, [deviceName, nameInput]);
+
+  const handleNameSave = async () => {
+    if (!deviceId || nameSaving || !nameInput.trim()) {
+      return;
+    }
+
+    setNameSaving(true);
+    try {
+      await renameDevice(deviceId, nameInput.trim());
+      setDeviceName(nameInput.trim());
+      Alert.alert('Device Renamed', 'Your device name has been updated.');
+    } catch (error) {
+      console.error('Failed to rename device', error);
+      Alert.alert('Error', 'Unable to rename device right now. Please try again.');
+    } finally {
+      setNameSaving(false);
+    }
+  };
 
   const handleModeChange = async (mode: 'local' | 'relay') => {
     if (!deviceId || streamMode === mode || modeSaving) {
@@ -112,6 +158,28 @@ export default function DeviceSettingsScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.form}>
+        <View style={styles.section}>
+          <Text style={styles.title}>Device Name</Text>
+          <Text style={styles.subtitle}>
+            Provide a friendly label so you can quickly identify this camera across your network.
+          </Text>
+          <TextInput
+            value={nameInput}
+            onChangeText={setNameInput}
+            placeholder="Enter device name"
+            style={styles.input}
+            editable={!nameSaving}
+            autoCapitalize="words"
+          />
+          <TouchableOpacity
+            style={[styles.primaryButton, (!isNameDirty || nameSaving) && styles.primaryButtonDisabled]}
+            onPress={handleNameSave}
+            disabled={!isNameDirty || nameSaving}
+          >
+            <Text style={styles.primaryButtonText}>{nameSaving ? 'Saving…' : 'Save Name'}</Text>
+          </TouchableOpacity>
+        </View>
+
         <View style={styles.section}>
           <Text style={styles.title}>Stream Mode</Text>
           <Text style={styles.subtitle}>
@@ -206,6 +274,30 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6B7280',
     marginBottom: 24,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 10,
+    padding: 14,
+    fontSize: 16,
+    color: '#111827',
+    backgroundColor: '#F9FAFB',
+  },
+  primaryButton: {
+    marginTop: 16,
+    backgroundColor: '#ef4444',
+    borderRadius: 10,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  primaryButtonDisabled: {
+    backgroundColor: '#fecaca',
+  },
+  primaryButtonText: {
+    color: '#ffffff',
+    fontWeight: '600',
+    fontSize: 16,
   },
   modeSelector: {
     flexDirection: 'row',
