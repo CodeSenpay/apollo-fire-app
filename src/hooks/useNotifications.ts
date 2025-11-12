@@ -10,6 +10,7 @@ import {
   unsubscribeFromNotifications,
 } from '@/src/state/socket';
 import { APP_ALERT_TITLE } from '@/src/constants/branding';
+import { useRouter } from 'expo-router';
 
 // Configure how notifications appear when the app is in the foreground
 Notifications.setNotificationHandler({
@@ -31,6 +32,7 @@ const resolveExpoProjectId = () =>
 export const useNotifications = (userId?: string | null) => {
   const notificationListener = useRef<Notifications.Subscription | null>(null);
   const responseListener = useRef<Notifications.Subscription | null>(null);
+  const router = useRouter();
 
   const registerForPushNotifications = async () => {
     if (!userId) {
@@ -156,6 +158,7 @@ export const useNotifications = (userId?: string | null) => {
         body,
         notificationType,
         deviceId,
+        deviceName,
         deliveryMethod,
         deliveryMeta,
       }: NotificationPayload) => {
@@ -174,6 +177,7 @@ export const useNotifications = (userId?: string | null) => {
         scheduleLocalNotification(safeTitle, safeBody, {
           notificationType,
           deviceId,
+          deviceName,
           fallback: true,
         });
       },
@@ -197,7 +201,75 @@ export const useNotifications = (userId?: string | null) => {
 
       responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
         console.log('Notification response:', response);
-        // Handle user interaction with the notification
+        const content = response.notification.request.content;
+        const rawData = content.data as Record<string, unknown> | undefined;
+        let rawDeviceId = rawData?.deviceId ?? rawData?.device_id;
+        let rawDeviceName = rawData?.deviceName ?? rawData?.device_name;
+
+        if (typeof rawDeviceId !== 'string' || !rawDeviceId.trim()) {
+          const trigger = response.notification.request.trigger as
+            | { remoteMessage?: { data?: Record<string, unknown> | string } }
+            | undefined;
+          const remotePayload = trigger?.remoteMessage?.data;
+          if (remotePayload) {
+            if (typeof remotePayload === 'string') {
+              try {
+                const parsed = JSON.parse(remotePayload) as Record<string, unknown>;
+                const parsedDeviceId = parsed.deviceId ?? parsed.device_id;
+                if (typeof parsedDeviceId === 'string' && parsedDeviceId.trim()) {
+                  rawDeviceId = parsedDeviceId;
+                }
+                const parsedDeviceName = parsed.deviceName ?? parsed.device_name;
+                if (typeof parsedDeviceName === 'string' && parsedDeviceName.trim()) {
+                  rawDeviceName = parsedDeviceName;
+                }
+              } catch (error) {
+                console.warn('Failed to parse remoteMessage data string:', error);
+              }
+            } else if (typeof remotePayload === 'object') {
+              const parsedDeviceId = (remotePayload as Record<string, unknown>).deviceId ??
+                (remotePayload as Record<string, unknown>).device_id;
+              if (typeof parsedDeviceId === 'string' && parsedDeviceId.trim()) {
+                rawDeviceId = parsedDeviceId;
+              }
+              const parsedDeviceName = (remotePayload as Record<string, unknown>).deviceName ??
+                (remotePayload as Record<string, unknown>).device_name;
+              if (typeof parsedDeviceName === 'string' && parsedDeviceName.trim()) {
+                rawDeviceName = parsedDeviceName;
+              }
+            }
+          }
+        }
+
+        if (typeof rawDeviceId !== 'string' || !rawDeviceId.trim()) {
+          const dataString = (content as unknown as { dataString?: unknown })?.dataString;
+          if (typeof dataString === 'string') {
+            try {
+              const parsed = JSON.parse(dataString) as Record<string, unknown>;
+              const parsedDeviceId = parsed.deviceId ?? parsed.device_id;
+              if (typeof parsedDeviceId === 'string' && parsedDeviceId.trim()) {
+                rawDeviceId = parsedDeviceId;
+              }
+              const parsedDeviceName = parsed.deviceName ?? parsed.device_name;
+              if (typeof parsedDeviceName === 'string' && parsedDeviceName.trim()) {
+                rawDeviceName = parsedDeviceName;
+              }
+            } catch (error) {
+              console.warn('Failed to parse notification dataString:', error);
+            }
+          }
+        }
+
+        if (typeof rawDeviceId === 'string' && rawDeviceId.trim()) {
+          const params: { id: string; name?: string } = { id: rawDeviceId.trim() };
+          if (typeof rawDeviceName === 'string' && rawDeviceName.trim()) {
+            params.name = rawDeviceName.trim();
+          }
+
+          router.push({ pathname: '/device/[id]', params });
+        } else {
+          console.warn('Notification response missing deviceId, cannot navigate');
+        }
       });
     };
 
@@ -216,7 +288,7 @@ export const useNotifications = (userId?: string | null) => {
       }
       unsubscribeFromNotifications(handleRealtimeNotification);
     };
-  }, [userId, handleRealtimeNotification]);
+  }, [userId, handleRealtimeNotification, router]);
 
   // Expose methods that can be used by components
   return {

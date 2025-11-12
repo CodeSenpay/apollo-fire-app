@@ -62,6 +62,7 @@ export type NotificationPayload = {
   id: number | null;
   userId: string | null;
   deviceId: string | null;
+  deviceName?: string | null;
   title: string | null;
   body: string | null;
   notificationType: string | null;
