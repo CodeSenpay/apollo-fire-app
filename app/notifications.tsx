@@ -1,4 +1,8 @@
-import { NotificationHistoryEntry, getNotificationHistory } from "@/src/services/apiConfig";
+import {
+  NotificationHistoryEntry,
+  getNotificationHistory,
+  NotificationHistoryPage,
+} from "@/src/services/apiConfig";
 import { useFocusEffect } from "@react-navigation/native";
 import { useCallback, useState } from "react";
 import {
@@ -13,12 +17,24 @@ import {
 export default function NotificationsPage() {
   const [notifications, setNotifications] = useState<NotificationHistoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  const PAGE_LIMIT = 10;
+
+  const mergePage = (pageData: NotificationHistoryPage, replace = false) => {
+    setPage(pageData.page);
+    setHasMore(pageData.hasMore);
+    setNotifications(prev => (replace ? pageData.notifications : [...prev, ...pageData.notifications]));
+  };
 
   const loadNotifications = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await getNotificationHistory(100);
-      setNotifications(data);
+      const pageData = await getNotificationHistory(PAGE_LIMIT, 1);
+      mergePage(pageData, true);
     } finally {
       setLoading(false);
     }
@@ -29,6 +45,31 @@ export default function NotificationsPage() {
       loadNotifications();
     }, [loadNotifications])
   );
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const pageData = await getNotificationHistory(PAGE_LIMIT, 1);
+      mergePage(pageData, true);
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  const handleLoadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) {
+      return;
+    }
+
+    setLoadingMore(true);
+    try {
+      const nextPage = page + 1;
+      const pageData = await getNotificationHistory(PAGE_LIMIT, nextPage);
+      mergePage(pageData, false);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, page]);
 
   const renderItem = ({ item }: { item: NotificationHistoryEntry }) => {
     const sentAt = new Date(item.sentAt).toLocaleString();
@@ -64,8 +105,18 @@ export default function NotificationsPage() {
               notifications.length === 0 ? styles.emptyContainer : styles.listContent
             }
             ListEmptyComponent={<Text style={styles.emptyText}>No notifications yet.</Text>}
-            refreshing={loading}
-            onRefresh={loadNotifications}
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            onEndReached={handleLoadMore}
+            onEndReachedThreshold={0.3}
+            ListFooterComponent={
+              loadingMore ? (
+                <View style={styles.footer}>
+                  <ActivityIndicator size="small" color="#ef4444" />
+                  <Text style={styles.footerText}>Loading more...</Text>
+                </View>
+              ) : null
+            }
           />
         )}
       </View>
@@ -149,9 +200,20 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     justifyContent: "center",
     alignItems: "center",
+    paddingVertical: 32,
   },
   emptyText: {
     fontSize: 16,
+    color: "#6b7280",
+  },
+  footer: {
+    paddingVertical: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  footerText: {
+    marginTop: 8,
+    fontSize: 13,
     color: "#6b7280",
   },
 });

@@ -271,30 +271,66 @@ export interface NotificationHistoryEntry {
   sentAt: string;
 }
 
-export const getNotificationHistory = async (limit = 100): Promise<NotificationHistoryEntry[]> => {
+export interface NotificationHistoryPage {
+  notifications: NotificationHistoryEntry[];
+  page: number;
+  limit: number;
+  hasMore: boolean;
+  nextPage: number | null;
+}
+
+export const getNotificationHistory = async (
+  limit = 100,
+  page = 1
+): Promise<NotificationHistoryPage> => {
   try {
     const user = await getUserData();
     if (!user) {
       console.error('No user found');
-      return [];
+      return {
+        notifications: [],
+        page: 1,
+        limit,
+        hasMore: false,
+        nextPage: null,
+      };
     }
 
     const response = await axios.get(buildApiUrl(`/users/${user.id}/notifications`), {
-      params: { limit }
+      params: { limit, page }
     });
 
     if (response.data.success && Array.isArray(response.data.notifications)) {
-      return response.data.notifications as NotificationHistoryEntry[];
+      return {
+        notifications: response.data.notifications as NotificationHistoryEntry[],
+        page: typeof response.data.page === 'number' ? response.data.page : page,
+        limit: typeof response.data.limit === 'number' ? response.data.limit : limit,
+        hasMore: Boolean(response.data.hasMore),
+        nextPage:
+          typeof response.data.nextPage === 'number' ? response.data.nextPage : null,
+      };
     }
 
-    return [];
+    return {
+      notifications: [],
+      page,
+      limit,
+      hasMore: false,
+      nextPage: null,
+    };
   } catch (error) {
     console.error('Error fetching notification history:', error);
     if (axios.isAxiosError(error)) {
       console.error('Response data:', error.response?.data);
       console.error('Response status:', error.response?.status);
     }
-    return [];
+    return {
+      notifications: [],
+      page,
+      limit,
+      hasMore: false,
+      nextPage: null,
+    };
   }
 };
 

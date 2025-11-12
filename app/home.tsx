@@ -67,8 +67,11 @@ export default function HomePage() {
       const deviceList = await getUserDevices();
       setDevices(deviceList);
 
-      const recentNotifications = await getNotificationHistory(3);
-      setNotifications(recentNotifications);
+      const recentNotificationsPage = await getNotificationHistory(3, 1);
+      const orderedNotifications = recentNotificationsPage.notifications
+        .sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime())
+        .slice(0, 3);
+      setNotifications(orderedNotifications);
     } catch (error) {
       console.error("Error loading home data:", error);
     }
