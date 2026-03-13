@@ -1,36 +1,52 @@
 // API Configuration and Authentication Service
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import axios from 'axios';
+
 // Configure your API base URL here
 const DEFAULT_API_BASE_URL = "http://192.168.1.104:3000/api";
 export const API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL || DEFAULT_API_BASE_URL).replace(/\/+$/, "");
 
-const buildApiUrl = (path: string) => {
-  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  return `${API_BASE_URL}${normalizedPath}`;
-};
-
 // Storage keys
-const TOKEN_KEY = '@auth_token';
+const TOKEN_KEY = 'auth_token'; // SecureStore doesn't need @ prefix
 const USER_KEY = '@user_data';
 
 export interface User {
   id: string;
   email: string;
   name?: string;
-  // Add other user properties as needed
 }
 
 export interface AuthResponse {
-
   success: boolean;
-  userId: string; 
+  token: string;
+  user: {
+    userId: string;
+  };
 }
+
+// Axios instance with interceptors
+const apiClient = axios.create({
+  baseURL: API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+apiClient.interceptors.request.use(async (config) => {
+  const token = await SecureStore.getItemAsync(TOKEN_KEY);
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+}, (error) => {
+  return Promise.reject(error);
+});
 
 // Auth token management
 export const getAuthToken = async (): Promise<string | null> => {
   try {
-    return await AsyncStorage.getItem(TOKEN_KEY);
+    return await SecureStore.getItemAsync(TOKEN_KEY);
   } catch (error) {
     console.error('Error getting auth token:', error);
     return null;
@@ -39,7 +55,7 @@ export const getAuthToken = async (): Promise<string | null> => {
 
 export const setAuthToken = async (token: string): Promise<void> => {
   try {
-    await AsyncStorage.setItem(TOKEN_KEY, token);
+    await SecureStore.setItemAsync(TOKEN_KEY, token);
   } catch (error) {
     console.error('Error setting auth token:', error);
   }
@@ -47,7 +63,7 @@ export const setAuthToken = async (token: string): Promise<void> => {
 
 export const removeAuthToken = async (): Promise<void> => {
   try {
-    await AsyncStorage.removeItem(TOKEN_KEY);
+    await SecureStore.deleteItemAsync(TOKEN_KEY);
   } catch (error) {
     console.error('Error removing auth token:', error);
   }
@@ -80,50 +96,50 @@ export const removeUserData = async (): Promise<void> => {
   }
 };
 
-// API request helper
-const apiRequest = async (
-  endpoint: string,
-  options: RequestInit = {}
-): Promise<any> => {
-  const token = await getAuthToken();
+// Authentication API calls
+export const loginAsGuest = async (userIdOverride?: string): Promise<AuthResponse> => {
+  // If we already have a token, we might be already logged in
+  const existingToken = await getAuthToken();
+  const existingUser = await getUserData();
   
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-
-  if (options.headers) {
-    Object.assign(headers, options.headers);
+  if (existingToken && existingUser && !userIdOverride) {
+    return { success: true, token: existingToken, user: { userId: existingUser.id } };
   }
 
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+  // Use override if provided (e.g. from Firebase), otherwise use existing user id or generate new
+  const userId = userIdOverride || existingUser?.id || `guest_${Math.random().toString(36).substring(7)}`;
+
+  const response = await apiClient.post('/users/login', { userId });
+  const data = response.data;
+
+  if (data.success) {
+    await setAuthToken(data.token);
+    await setUserData({ id: data.user.userId, email: "guest@apollo.io", name: "Guest User" });
   }
-
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    ...options,
-    headers,
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Request failed' }));
-    throw new Error(error.message || `HTTP ${response.status}`);
-  }
-
-  return response.json();
+  
+  return data;
 };
 
-// Authentication API calls
+export const logout = async (): Promise<void> => {
+  try {
+    await apiClient.post('/users/logout-user');
+  } catch (error) {
+    console.error('Logout API call failed:', error);
+  } finally {
+    await removeAuthToken();
+    await removeUserData();
+  }
+};
+
 export const loginWithEmail = async (
   email: string,
   password: string
 ): Promise<AuthResponse> => {
-  const data = await apiRequest('/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({ email, password }),
-  });
+  const response = await apiClient.post('/auth/login', { email, password });
+  const data = response.data;
 
   await setAuthToken(data.token);
-  await setUserData(data.user);
+  await setUserData({ id: data.user.userId, email, name: data.user.name || email });
   
   return data;
 };
@@ -132,76 +148,27 @@ export const signUpWithEmail = async (
   email: string,
   password: string
 ): Promise<AuthResponse> => {
-  const data = await apiRequest('/auth/signup', {
-    method: 'POST',
-    body: JSON.stringify({ email, password }),
-  });
+  const response = await apiClient.post('/auth/signup', { email, password });
+  const data = response.data;
 
   await setAuthToken(data.token);
-  await setUserData(data.user);
+  await setUserData({ id: data.user.userId, email, name: data.user.name || email });
   
   return data;
 };
 
-export const loginAsGuest = async (): Promise<AuthResponse> => {
-  // Check if user already exists in local storage
-  const existingUser = await getUserData();
-  
-  if (existingUser && existingUser.id) {
-    console.log('Existing guest user found:', existingUser.id);
-    return { success: true, userId: existingUser.id };
-  }
-  
-  // Only register a new user if none exists
-
-  const response = await axios.get(buildApiUrl('/users/register-user-id'));
-  
-  await setUserData({id:response.data.userId, email:"guest@gmail.com", name:"guest" });
-  
-  return response.data;
-};
-
-export const logout = async (): Promise<void> => {
-  const existingUser = await getUserData();
-
-  if (!existingUser?.id) {
-    console.warn('Logout requested but no user ID found in storage.');
-    await removeAuthToken();
-    return;
-  }
-
-  try {
-    const response = await axios.post(
-      buildApiUrl('/users/logout-user'),
-      { userId: existingUser.id },
-      { headers: { 'Content-Type': 'application/json' } }
-    );
-
-    if (!response.data?.success) {
-      throw new Error(response.data?.message || 'Logout failed');
-    }
-
-    console.log('Logout response:', response.data);
-  } catch (error) {
-    console.error('Logout API call failed:', error);
-    throw error;
-  } finally {
-    await removeAuthToken();
-  }
-};
-
 export const getCurrentUser = async (): Promise<User | null> => {
-  const token = await getAuthToken();
-  if (!token) return null;
-
   try {
-    const user = await apiRequest('/auth/me');
+    const response = await apiClient.get('/auth/me');
+    const user = {
+      id: response.data.user.userId,
+      email: response.data.user.email,
+      name: response.data.user.name
+    };
     await setUserData(user);
     return user;
   } catch (error) {
     console.error('Error fetching current user:', error);
-    await removeAuthToken();
-    await removeUserData();
     return null;
   }
 };
@@ -217,49 +184,26 @@ export interface DeviceSummary {
 
 export const getUserDevices = async (): Promise<DeviceSummary[]> => {
   try {
-    const user = await getUserData();
-    if (!user) {
-      console.error('No user found');
-      return [];
-    }
-    console.log("Fetching devices for user:", user.id);
-    const response = await axios.get(buildApiUrl(`/users/${user.id}/devices`));
-
-    console.log("API Response:", JSON.stringify(response.data, null, 2));
+    const response = await apiClient.get('/users/devices');
 
     if (response.data.success && response.data.devices) {
-      const devices: DeviceSummary[] = response.data.devices.map((device: any) => ({
+      return response.data.devices.map((device: any) => ({
         id: device.id,
         name: device.name ?? `Device ${String(device.id).slice(0, 8)}`,
         status: device.status,
         createdAt: device.createdAt,
         updatedAt: device.updatedAt,
       }));
-      console.log("Devices:", devices);
-      return devices;
     }
-
-    console.log("No devices found or unsuccessful response");
     return [];
   } catch (error) {
     console.error('Error fetching user devices:', error);
-    if (axios.isAxiosError(error)) {
-      console.error('Response data:', error.response?.data);
-      console.error('Response status:', error.response?.status);
-    }
     return [];
   }
 };
 
 export const renameDevice = async (deviceId: string, name: string): Promise<void> => {
-  const user = await getUserData();
-  if (!user?.id) {
-    throw new Error('Unable to rename device: user not authenticated');
-  }
-
-  await axios.put(buildApiUrl(`/users/${user.id}/devices/${deviceId}/name`), {
-    name,
-  });
+  await apiClient.put(`/users/devices/${deviceId}/name`, { name });
 };
 
 export interface NotificationHistoryEntry {
@@ -284,19 +228,7 @@ export const getNotificationHistory = async (
   page = 1
 ): Promise<NotificationHistoryPage> => {
   try {
-    const user = await getUserData();
-    if (!user) {
-      console.error('No user found');
-      return {
-        notifications: [],
-        page: 1,
-        limit,
-        hasMore: false,
-        nextPage: null,
-      };
-    }
-
-    const response = await axios.get(buildApiUrl(`/users/${user.id}/notifications`), {
+    const response = await apiClient.get('/users/notifications', {
       params: { limit, page }
     });
 
@@ -306,41 +238,20 @@ export const getNotificationHistory = async (
         page: typeof response.data.page === 'number' ? response.data.page : page,
         limit: typeof response.data.limit === 'number' ? response.data.limit : limit,
         hasMore: Boolean(response.data.hasMore),
-        nextPage:
-          typeof response.data.nextPage === 'number' ? response.data.nextPage : null,
+        nextPage: typeof response.data.nextPage === 'number' ? response.data.nextPage : null,
       };
     }
 
-    return {
-      notifications: [],
-      page,
-      limit,
-      hasMore: false,
-      nextPage: null,
-    };
+    return { notifications: [], page, limit, hasMore: false, nextPage: null };
   } catch (error) {
     console.error('Error fetching notification history:', error);
-    if (axios.isAxiosError(error)) {
-      console.error('Response data:', error.response?.data);
-      console.error('Response status:', error.response?.status);
-    }
-    return {
-      notifications: [],
-      page,
-      limit,
-      hasMore: false,
-      nextPage: null,
-    };
+    return { notifications: [], page, limit, hasMore: false, nextPage: null };
   }
-};
-
-export const getDeviceDetails = async (deviceId: string): Promise<any> => {
-  return apiRequest(`/devices/${deviceId}/details`);
 };
 
 export const isDeviceAvailableForClaim = async (deviceId: string): Promise<boolean> => {
   try {
-    const response = await axios.get(buildApiUrl(`/users/devices/${deviceId}/available`));
+    const response = await apiClient.get(`/users/devices/${deviceId}/available`);
     return response.data.available === true;
   } catch (error) {
     console.error('Error checking device availability:', error);
@@ -348,68 +259,34 @@ export const isDeviceAvailableForClaim = async (deviceId: string): Promise<boole
   }
 };
 
-export const claimDevice = async (deviceId: string, userId: string): Promise<void> => {
-  await axios.post(buildApiUrl(`/users/devices/${deviceId}/claim`), {
-    userId
-  });
+export const claimDevice = async (deviceId: string): Promise<void> => {
+  await apiClient.post(`/users/devices/${deviceId}/claim`);
 };
 
-export const resetDevice = async (
-  deviceId: string,
-  userId: string
-): Promise<void> => {
-  await apiRequest(`/devices/${deviceId}/reset`, {
-    method: 'POST',
-    body: JSON.stringify({ userId }),
-  });
+export const resetDevice = async (deviceId: string): Promise<void> => {
+  await apiClient.post(`/devices/${deviceId}/reset`);
 };
 
 export const setStreamMode = async (
   deviceId: string,
   mode: 'local' | 'relay'
 ): Promise<void> => {
-  try {
-    await axios.put(buildApiUrl(`/devices/${deviceId}/stream-mode`), {
-      mode
-    });
-  } catch (error) {
-    console.error('Error setting stream mode:', error);
-    if (axios.isAxiosError(error)) {
-      console.error('Response data:', error.response?.data);
-      console.error('Response status:', error.response?.status);
-    }
-    throw error;
-  }
+  await apiClient.put(`/devices/${deviceId}/stream-mode`, { mode });
 };
 
 export const requestStream = async (
   deviceId: string,
   requested: boolean
 ): Promise<void> => {
-  try {
-    await axios.put(buildApiUrl(`/devices/${deviceId}/stream-request`), {
-      requested
-    });
-  } catch (error) {
-    console.error('Error requesting stream:', error);
-    if (axios.isAxiosError(error)) {
-      console.error('Response data:', error.response?.data);
-      console.error('Response status:', error.response?.status);
-    }
-    throw error;
-  }
+  await apiClient.put(`/devices/${deviceId}/stream-request`, { requested });
 };
 
 export const getRelayStreamUrl = async (deviceId: string): Promise<string | null> => {
   try {
-    const response = await axios.get(buildApiUrl(`/devices/${deviceId}/stream-url`));
+    const response = await apiClient.get(`/devices/${deviceId}/stream-url`);
     return response.data.streamUrl || null;
   } catch (error) {
     console.error('Error getting relay stream URL:', error);
-    if (axios.isAxiosError(error)) {
-      console.error('Response data:', error.response?.data);
-      console.error('Response status:', error.response?.status);
-    }
     return null;
   }
 };
@@ -422,9 +299,7 @@ export interface ServoState {
 }
 
 const clampServoPayload = (value: number | undefined) => {
-  if (typeof value !== 'number') {
-    return undefined;
-  }
+  if (typeof value !== 'number') return undefined;
   return Math.min(180, Math.max(0, value));
 };
 
@@ -432,34 +307,23 @@ export const setServoPosition = async (
   deviceId: string,
   payload: { pan?: number; tilt?: number; persistOnly?: boolean }
 ): Promise<void> => {
-  const body: Record<string, number> = {};
+  const body: Record<string, any> = {};
   const clampedPan = clampServoPayload(payload.pan);
   const clampedTilt = clampServoPayload(payload.tilt);
 
-  if (typeof clampedPan === 'number') {
-    body.pan = clampedPan;
-  }
-  if (typeof clampedTilt === 'number') {
-    body.tilt = clampedTilt;
-  }
+  if (typeof clampedPan === 'number') body.pan = clampedPan;
+  if (typeof clampedTilt === 'number') body.tilt = clampedTilt;
+  if (payload.persistOnly === true) body.persistOnly = 1;
 
-  if (payload.persistOnly === true) {
-    body.persistOnly = 1;
-  }
+  if (Object.keys(body).length === 0) return;
 
-  if (Object.keys(body).length === 0) {
-    return;
-  }
-
-  await axios.put(buildApiUrl(`/devices/${deviceId}/servo`), body);
+  await apiClient.put(`/devices/${deviceId}/servo`, body);
 };
 
 export const getServoState = async (deviceId: string): Promise<ServoState | null> => {
   try {
-    const response = await axios.get(buildApiUrl(`/devices/${deviceId}/servo`));
-    if (!response.data?.success || !response.data?.servo) {
-      return null;
-    }
+    const response = await apiClient.get(`/devices/${deviceId}/servo`);
+    if (!response.data?.success || !response.data?.servo) return null;
 
     const servo = response.data.servo;
     return {
@@ -470,25 +334,13 @@ export const getServoState = async (deviceId: string): Promise<ServoState | null
     };
   } catch (error) {
     console.error('Error fetching servo state:', error);
-    if (axios.isAxiosError(error)) {
-      console.error('Response data:', error.response?.data);
-      console.error('Response status:', error.response?.status);
-    }
     return null;
   }
 };
 
-// Push notification token registration
-export const registerPushToken = async (token: string, userId: string): Promise<void> => {
-  console.log(JSON.stringify({ token, userId }))
+export const registerPushToken = async (token: string): Promise<void> => {
   try {
-    await fetch(buildApiUrl('/users/register-token'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ token, userId }),
-    });
+    await apiClient.post('/users/register-token', { token });
   } catch (error) {
     console.error('Error registering push token:', error);
   }

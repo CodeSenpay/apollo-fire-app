@@ -1,4 +1,4 @@
-import { getCurrentUser, getUserData, User } from '@/src/services/apiConfig';
+import { loginAsGuest, getCurrentUser, getUserData, User } from '@/src/services/apiConfig';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { AppState } from 'react-native';
 
@@ -42,18 +42,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // First check local storage
         const storedUser = await getUserData();
         console.log(`Stored User: ${storedUser?.id}`);
-        if (storedUser) {
-          setUser(storedUser);
-          // Only verify with API if user has an email (not a guest)
-          // Guest users have email "guest@gmail.com" and no auth token
-          if (storedUser.email !== "guest@gmail.com") {
-            const currentUser = await getCurrentUser();
-            if (currentUser) {
-              setUser(currentUser);
-            } else {
-              setUser(null);
-            }
-          }
+        
+        // Use loginAsGuest to either refresh the existing session or start a new one
+        // This handles both guest and authenticated users if we pass the UID
+        const response = await loginAsGuest(storedUser?.id);
+        
+        if (response.success) {
+          setUser({
+            id: response.user.userId,
+            email: "guest@apollo.io", // This will be updated if we implement full user profiles
+            name: "Guest User"
+          });
         }
       } catch (error) {
         console.error('Error checking auth:', error);

@@ -19,7 +19,8 @@
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
         }
-      }
+      },
+      "bundleIdentifier": "com.apollofireapp"
     },
     "android": {
       "adaptiveIcon": {
@@ -29,7 +30,9 @@
       "manifest": {
         "networkSecurityConfig": "@xml/network_security_config"
       },
-      "permissions": ["android.permission.INTERNET"],
+      "permissions": [
+        "android.permission.INTERNET"
+      ],
       "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": true,
       "package": "com.apollofireapp",

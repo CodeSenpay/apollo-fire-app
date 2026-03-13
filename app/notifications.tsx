@@ -1,10 +1,9 @@
 import {
   NotificationHistoryEntry,
   getNotificationHistory,
-  NotificationHistoryPage,
 } from "@/src/services/apiConfig";
-import { useFocusEffect } from "@react-navigation/native";
-import { useCallback, useState } from "react";
+import { useInfiniteQuery } from "@tanstack/react-query";
+import { useCallback } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -15,61 +14,34 @@ import {
 } from "react-native";
 
 export default function NotificationsPage() {
-  const [notifications, setNotifications] = useState<NotificationHistoryEntry[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-
   const PAGE_LIMIT = 10;
 
-  const mergePage = (pageData: NotificationHistoryPage, replace = false) => {
-    setPage(pageData.page);
-    setHasMore(pageData.hasMore);
-    setNotifications(prev => (replace ? pageData.notifications : [...prev, ...pageData.notifications]));
-  };
+  const {
+    data,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isLoading,
+    refetch,
+    isRefetching,
+  } = useInfiniteQuery({
+    queryKey: ["notifications"],
+    queryFn: ({ pageParam = 1 }) => getNotificationHistory(PAGE_LIMIT, pageParam),
+    getNextPageParam: (lastPage) => lastPage.nextPage,
+    initialPageParam: 1,
+  });
 
-  const loadNotifications = useCallback(async () => {
-    setLoading(true);
-    try {
-      const pageData = await getNotificationHistory(PAGE_LIMIT, 1);
-      mergePage(pageData, true);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useFocusEffect(
-    useCallback(() => {
-      loadNotifications();
-    }, [loadNotifications])
-  );
+  const notifications = data?.pages.flatMap((page) => page.notifications) ?? [];
 
   const handleRefresh = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      const pageData = await getNotificationHistory(PAGE_LIMIT, 1);
-      mergePage(pageData, true);
-    } finally {
-      setRefreshing(false);
-    }
-  }, []);
+    await refetch();
+  }, [refetch]);
 
-  const handleLoadMore = useCallback(async () => {
-    if (loadingMore || !hasMore) {
-      return;
+  const handleLoadMore = useCallback(() => {
+    if (hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
     }
-
-    setLoadingMore(true);
-    try {
-      const nextPage = page + 1;
-      const pageData = await getNotificationHistory(PAGE_LIMIT, nextPage);
-      mergePage(pageData, false);
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [loadingMore, hasMore, page]);
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const renderItem = ({ item }: { item: NotificationHistoryEntry }) => {
     const sentAt = new Date(item.sentAt).toLocaleString();
@@ -92,7 +64,7 @@ export default function NotificationsPage() {
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
         <Text style={styles.heading}>Notification History</Text>
-        {loading && notifications.length === 0 ? (
+        {isLoading && notifications.length === 0 ? (
           <View style={styles.loader}>
             <ActivityIndicator size="large" color="#ef4444" />
           </View>
@@ -104,13 +76,15 @@ export default function NotificationsPage() {
             contentContainerStyle={
               notifications.length === 0 ? styles.emptyContainer : styles.listContent
             }
-            ListEmptyComponent={<Text style={styles.emptyText}>No notifications yet.</Text>}
-            refreshing={refreshing}
+            ListEmptyComponent={
+              !isLoading ? <Text style={styles.emptyText}>No notifications yet.</Text> : null
+            }
+            refreshing={isRefetching}
             onRefresh={handleRefresh}
             onEndReached={handleLoadMore}
-            onEndReachedThreshold={0.3}
+            onEndReachedThreshold={0.5}
             ListFooterComponent={
-              loadingMore ? (
+              isFetchingNextPage ? (
                 <View style={styles.footer}>
                   <ActivityIndicator size="small" color="#ef4444" />
                   <Text style={styles.footerText}>Loading more...</Text>

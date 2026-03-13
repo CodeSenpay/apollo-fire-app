@@ -12,15 +12,16 @@ export default function AuthScreen() {
   const { setUser } = useAuth();
 
   const handleGuestLogin = async () => {
-    
     setLoading(true);
     try {
       const response = await loginAsGuest();
-      
-        console.log("Success Tayo!")
-        setUser({id:response.userId, email:"guest@gmail.com", name:"guest" });
-        
-
+      if (response.success) {
+        setUser({
+          id: response.user.userId,
+          email: "guest@apollo.io",
+          name: "Guest User"
+        });
+      }
     } catch (e: any) {
       Alert.alert("Guest Login Error", e.message);
     }

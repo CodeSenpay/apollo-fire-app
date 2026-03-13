@@ -46,35 +46,41 @@ function GateWatcher() {
   return null;
 }
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
+const queryClient = new QueryClient();
+
 export default function RootLayout() {
   return (
-    <AuthProvider>
-      <GateWatcher />
-      <Stack>
-        <Stack.Screen name="index" options={{ headerShown: false }} />
-        <Stack.Screen
-          name="login"
-          options={{ presentation: "fullScreenModal", headerShown: false }}
-        />
-     <Stack.Screen
-          name="auth"
-          options={{ presentation: "fullScreenModal", headerShown: false }}
-        />
-        <Stack.Screen
-          name="dashboard"
-          options={{ headerShown: false, statusBarHidden: false }}
-        />
-        <Stack.Screen
-          name="device/settings"
-          options={{
-            headerShown: true,
-            headerTitle: "Device Settings",
-            presentation: "modal",
-          }}
-        />
-        <Stack.Screen name="profile" options={{ headerShown: false }} />
-        <Stack.Screen name="addsecurity" options={{ headerShown: false }} />
-      </Stack>
-    </AuthProvider>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <GateWatcher />
+        <Stack>
+          <Stack.Screen name="index" options={{ headerShown: false }} />
+          <Stack.Screen
+            name="login"
+            options={{ presentation: "fullScreenModal", headerShown: false }}
+          />
+          <Stack.Screen
+            name="auth"
+            options={{ presentation: "fullScreenModal", headerShown: false }}
+          />
+          <Stack.Screen
+            name="dashboard"
+            options={{ headerShown: false, statusBarHidden: false }}
+          />
+          <Stack.Screen
+            name="device/settings"
+            options={{
+              headerShown: true,
+              headerTitle: "Device Settings",
+              presentation: "modal",
+            }}
+          />
+          <Stack.Screen name="profile" options={{ headerShown: false }} />
+          <Stack.Screen name="addsecurity" options={{ headerShown: false }} />
+        </Stack>
+      </AuthProvider>
+    </QueryClientProvider>
   );
 }

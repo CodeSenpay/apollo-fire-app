@@ -17,6 +17,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { APP_NAME } from "@/src/constants/branding";
 
 const formatDeviceStatus = (status?: string) => {
@@ -56,52 +57,36 @@ function QuickActionButton({ icon, label, onPress }: QuickActionButtonProps) {
 export default function HomePage() {
   const router = useRouter();
   const navigation = useNavigation<any>();
+  const queryClient = useQueryClient();
 
-  const [devices, setDevices] = useState<DeviceSummary[]>([]);
-  const [notifications, setNotifications] = useState<NotificationHistoryEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  const {
+    data: devices = [],
+    isLoading: isLoadingDevices,
+    refetch: refetchDevices,
+  } = useQuery({
+    queryKey: ["devices"],
+    queryFn: getUserDevices,
+  });
+
+  const {
+    data: notificationsData,
+    isLoading: isLoadingNotifications,
+    refetch: refetchNotifications,
+  } = useQuery({
+    queryKey: ["notifications", "recent"],
+    queryFn: () => getNotificationHistory(3, 1),
+  });
+
+  const notifications = notificationsData?.notifications ?? [];
+  const loading = isLoadingDevices || isLoadingNotifications;
+
   const [refreshing, setRefreshing] = useState(false);
-
-  const loadData = useCallback(async () => {
-    try {
-      const deviceList = await getUserDevices();
-      setDevices(deviceList);
-
-      const recentNotificationsPage = await getNotificationHistory(3, 1);
-      const orderedNotifications = recentNotificationsPage.notifications
-        .sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime())
-        .slice(0, 3);
-      setNotifications(orderedNotifications);
-    } catch (error) {
-      console.error("Error loading home data:", error);
-    }
-  }, []);
-
-  useFocusEffect(
-    useCallback(() => {
-      let isActive = true;
-
-      const run = async () => {
-        setLoading(true);
-        await loadData();
-        if (isActive) {
-          setLoading(false);
-        }
-      };
-
-      run();
-
-      return () => {
-        isActive = false;
-      };
-    }, [loadData])
-  );
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadData();
+    await Promise.all([refetchDevices(), refetchNotifications()]);
     setRefreshing(false);
-  }, [loadData]);
+  }, [refetchDevices, refetchNotifications]);
 
   return (
     <View style={styles.container}>

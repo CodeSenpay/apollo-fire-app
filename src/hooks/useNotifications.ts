@@ -95,7 +95,7 @@ export const useNotifications = (userId?: string | null) => {
       console.log('Expo Push Token:', token);
 
       try {
-        await registerPushToken(token, userId);
+        await registerPushToken(token);
         console.log('Push token registered with backend');
       } catch (error) {
         console.error('Failed to register push token with backend:', error);
