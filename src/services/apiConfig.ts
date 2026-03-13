@@ -188,11 +188,11 @@ export const getUserDevices = async (): Promise<DeviceSummary[]> => {
 
     if (response.data.success && response.data.devices) {
       return response.data.devices.map((device: any) => ({
-        id: device.id,
-        name: device.name ?? `Device ${String(device.id).slice(0, 8)}`,
+        id: device.device_id,
+        name: device.name ?? `Device ${String(device.device_id).slice(0, 8)}`,
         status: device.status,
-        createdAt: device.createdAt,
-        updatedAt: device.updatedAt,
+        createdAt: device.created_at,
+        updatedAt: device.updated_at,
       }));
     }
     return [];
@@ -340,7 +340,7 @@ export const getServoState = async (deviceId: string): Promise<ServoState | null
 
 export const registerPushToken = async (token: string): Promise<void> => {
   try {
-    await apiClient.post('/users/register-token', { token });
+    await apiClient.post('/users/register-token', { fcmToken: token });
   } catch (error) {
     console.error('Error registering push token:', error);
   }
